@@ -70,7 +70,7 @@ const COURSES = [
     name: 'Desk Course',
     theme: 'desk',
     bonus: true,
-    blurb: 'Rulers, pencils, coffee spills and a desk fan.',
+    blurb: 'Rulers, pencils, ink blots and a desk fan.',
     holes: [
       {
         name: 'Coffee Break',

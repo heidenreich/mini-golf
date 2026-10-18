@@ -1,8 +1,13 @@
 'use strict';
 
 const STEP = 1 / 120;            // fixed physics timestep
-const MAX_DRAG = 160;            // drag distance (world px) for full power
+const MAX_DRAG_PX = 140;         // finger/mouse travel (CSS px) for full power
 const MAX_STROKES = 8;           // pick up after this many
+const MIN_BALL_PX = 4.5;         // never draw the ball smaller than this radius on screen
+const HOLED_PAUSE = 0.9;         // seconds of celebration before the hole card
+const SPLASH_TIME = 0.6;         // seconds the splash plays before the ball returns
+
+const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 // ---- Saved progress -------------------------------------------------------
 
@@ -11,7 +16,12 @@ const SAVE_KEY = 'minigolf.v1';
 function loadSave() {
   let data = {};
   try { data = JSON.parse(localStorage.getItem(SAVE_KEY)) || {}; } catch (e) { /* private mode etc. */ }
-  return { unlocked: data.unlocked || [], best: data.best || {}, sound: data.sound !== false };
+  return {
+    unlocked: data.unlocked || [],
+    best: data.best || {},
+    tips: data.tips || [],
+    sound: data.sound !== false,
+  };
 }
 
 const save = loadSave();
@@ -33,11 +43,11 @@ const game = {
   strokes: 0,
   ball: { x: 0, y: 0, vx: 0, vy: 0 },
   lastRest: { x: 0, y: 0 },
-  state: 'menu',                 // menu | aim | rolling | sinking | done
+  state: 'menu',                 // menu | aim | rolling | sinking | holed | splashing | done
   paused: false,
   t: 0,
   stillTime: 0,
-  sinkT: 0,
+  timer: 0,                      // time spent in sinking / holed / splashing
   sinkFrom: null,
   drag: null,
 };
@@ -45,14 +55,17 @@ const game = {
 const course = () => COURSES[game.courseIndex];
 const hole = () => course().holes[game.holeIndex];
 const theme = () => THEMES[course().theme];
-const total = () => game.scores.reduce((a, s) => a + s, 0);
+const total = () => game.scores.reduce((a, s) => a + (s || 0), 0);
 
 function setTheme(name) {
-  document.body.className = `theme-${name}`;
+  document.body.classList.remove('theme-tiny', 'theme-desk');
+  document.body.classList.add(`theme-${name}`);
+  resize();
 }
 
 function startCourse(index) {
   game.courseIndex = index;
+  game.holeIndex = 0;
   game.scores = [];
   setTheme(course().theme);
   startHole(0);
@@ -68,9 +81,34 @@ function startHole(index) {
   game.paused = false;
   game.stillTime = 0;
   game.drag = null;
+  particles.length = 0;
+  document.body.classList.remove('menu');
   hideOverlay();
   updateHud();
-  toast(`Hole ${index + 1} · ${hole().name} · Par ${hole().par}`);
+  resize();
+
+  clearToasts();
+  if (!view.signShown) toast(`Hole ${index + 1} · ${hole().name} · Par ${hole().par}`);
+  for (const tip of newTips()) toast(tip, 3200);
+}
+
+// First time a player meets each kind of hazard or obstacle, explain it.
+function newTips() {
+  const h = hole();
+  const tips = theme().tips;
+  const keys = new Set();
+  (h.zones || []).forEach(z => keys.add(z.type));
+  if ((h.spinners || []).length) keys.add('spinner');
+  (h.movers || []).forEach(m => keys.add(m.kind));
+  const out = [];
+  for (const key of keys) {
+    const id = `${course().theme}:${key}`;
+    if (!tips[key] || save.tips.includes(id)) continue;
+    save.tips.push(id);
+    out.push(tips[key]);
+  }
+  if (out.length) writeSave();
+  return out;
 }
 
 // ---- Physics step ---------------------------------------------------------
@@ -82,10 +120,27 @@ function step(dt) {
   const h = hole();
 
   if (game.state === 'sinking') {
-    game.sinkT = Math.min(1, game.sinkT + dt / 0.3);
-    b.x = game.sinkFrom.x + (h.cup[0] - game.sinkFrom.x) * game.sinkT;
-    b.y = game.sinkFrom.y + (h.cup[1] - game.sinkFrom.y) * game.sinkT;
-    if (game.sinkT >= 1) finishHole(false);
+    game.timer = Math.min(1, game.timer + dt / 0.3);
+    b.x = game.sinkFrom.x + (h.cup[0] - game.sinkFrom.x) * game.timer;
+    b.y = game.sinkFrom.y + (h.cup[1] - game.sinkFrom.y) * game.timer;
+    if (game.timer >= 1) {
+      game.state = 'holed';
+      game.timer = 0;
+    }
+    return;
+  }
+  if (game.state === 'holed') {
+    game.timer += dt;
+    if (game.timer >= HOLED_PAUSE) finishHole(false);
+    return;
+  }
+  if (game.state === 'splashing') {
+    game.timer += dt;
+    if (game.timer >= SPLASH_TIME) {
+      Object.assign(b, { x: game.lastRest.x, y: game.lastRest.y, vx: 0, vy: 0 });
+      game.state = 'aim';
+      if (game.strokes >= MAX_STROKES) finishHole(true);
+    }
     return;
   }
   if (game.state === 'done') return;
@@ -134,12 +189,13 @@ function step(dt) {
   const after = zoneAt(h, b.x, b.y);
   if (after && after.type === 'water') {
     sfx.splash();
+    splash(b.x, b.y);
     game.strokes++;
-    Object.assign(b, { x: game.lastRest.x, y: game.lastRest.y, vx: 0, vy: 0 });
-    game.state = 'aim';
+    b.vx = b.vy = 0;
+    game.state = 'splashing';
+    game.timer = 0;
     updateHud();
-    toast('Water hazard · +1 stroke');
-    if (game.strokes >= MAX_STROKES) finishHole(true);
+    toast(theme().waterToast, 1800, true);
     return;
   }
 
@@ -164,7 +220,7 @@ function checkCup(dt) {
   if (d >= CUP_R) return false;
   if (Math.hypot(b.vx, b.vy) < CUP_CAPTURE_SPEED) {
     game.state = 'sinking';
-    game.sinkT = 0;
+    game.timer = 0;
     game.sinkFrom = { x: b.x, y: b.y };
     b.vx = b.vy = 0;
     sfx.cup();
@@ -193,19 +249,33 @@ function shoot(dirX, dirY, power) {
   updateHud();
 }
 
-// ---- Celebration particles ------------------------------------------------
+// ---- Particles ------------------------------------------------------------
 
 const particles = [];
 
 function burst(x, y) {
   const colors = theme().confetti;
-  for (let i = 0; i < 28; i++) {
-    const a = Math.random() * Math.PI * 2, s = 80 + Math.random() * 220;
+  for (let i = 0; i < 32; i++) {
+    const a = Math.random() * Math.PI * 2, s = 80 + Math.random() * 240;
     particles.push({
-      x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+      kind: 'bit', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
       rot: Math.random() * 6, spin: (Math.random() - 0.5) * 12,
-      life: 1, color: colors[i % colors.length],
+      life: 1, decay: 1 / 1.6, size: 1, color: colors[i % colors.length],
     });
+  }
+}
+
+function splash(x, y) {
+  const colors = theme().splash;
+  for (let i = 0; i < 16; i++) {
+    const a = Math.random() * Math.PI * 2, s = 40 + Math.random() * 120;
+    particles.push({
+      kind: 'drop', x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+      rot: 0, spin: 0, life: 1, decay: 1 / 0.7, size: 2 + Math.random() * 2.5, color: colors[i % colors.length],
+    });
+  }
+  for (let i = 0; i < 2; i++) {
+    particles.push({ kind: 'ring', x, y, vx: 0, vy: 0, rot: 0, spin: 0, life: 1 + i * 0.3, decay: 1 / 0.8, size: 0, color: colors[0] });
   }
 }
 
@@ -216,9 +286,29 @@ function updateParticles(dt) {
     p.vx *= 1 - 2.5 * dt;
     p.vy *= 1 - 2.5 * dt;
     p.rot += p.spin * dt;
-    p.life -= dt / 1.2;
+    p.life -= dt * p.decay;
   }
   for (let i = particles.length - 1; i >= 0; i--) if (particles[i].life <= 0) particles.splice(i, 1);
+}
+
+function drawParticles() {
+  for (const p of particles) {
+    const a = Math.max(0, Math.min(1, p.life));
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.fillStyle = ctx.strokeStyle = p.color;
+    if (p.kind === 'bit') {
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.fillRect(-4, -2.5, 8, 5);
+    } else if (p.kind === 'drop') {
+      circle(ctx, p.x, p.y, p.size); ctx.fill();
+    } else {
+      ctx.lineWidth = 2.5;
+      circle(ctx, p.x, p.y, 8 + (1 - a) * 30); ctx.stroke();
+    }
+    ctx.restore();
+  }
 }
 
 // ---- Scoring & screens ----------------------------------------------------
@@ -232,20 +322,26 @@ function scoreName(strokes, par) {
 
 function vsPar(score, par) {
   const diff = score - par;
-  return diff === 0 ? 'Even par' : diff > 0 ? `${diff} over par` : `${-diff} under par`;
+  return diff === 0 ? 'even par' : diff > 0 ? `${diff} over par` : `${-diff} under par`;
 }
+
+const cap = s => s[0].toUpperCase() + s.slice(1);
 
 function finishHole(pickedUp) {
   game.state = 'done';
   game.drag = null;
   game.scores[game.holeIndex] = game.strokes;
   updateHud();
-  const last = game.holeIndex === course().holes.length - 1;
+  const c = course();
+  const last = game.holeIndex === c.holes.length - 1;
   const title = pickedUp ? 'Picked up' : scoreName(game.strokes, hole().par);
   const word = game.strokes === 1 ? 'stroke' : 'strokes';
+  const playedPar = c.holes.slice(0, game.holeIndex + 1).reduce((a, h) => a + h.par, 0);
+  const holesWord = game.holeIndex === 0 ? '1 hole' : `${game.holeIndex + 1} holes`;
   showOverlay(
     `<h2>${title}</h2>` +
     `<p>${game.strokes} ${word} on a par ${hole().par}</p>` +
+    `<p class="round">Round: <b>${cap(vsPar(total(), playedPar))}</b> after ${holesWord}</p>` +
     `<div class="actions"><button data-action="${last ? 'finish' : 'next'}">${last ? 'See scorecard' : 'Next hole'}</button></div>`
   );
 }
@@ -262,7 +358,7 @@ function finishCourse() {
 
   showOverlay(
     `<h2>Round complete</h2>` +
-    `<p>${c.name} · ${vsPar(score, coursePar(c))}${newBest ? ' · New best!' : ''}</p>` +
+    `<p>${c.name} · ${cap(vsPar(score, coursePar(c)))}${newBest ? ' · New best!' : ''}</p>` +
     scorecardTable(game.scores) +
     unlocks.map(o => `<p class="unlock">Unlocked: <b>${o.name}</b></p>`).join('') +
     `<div class="actions"><button data-action="replay">Play again</button>` +
@@ -270,10 +366,17 @@ function finishCourse() {
   );
 }
 
+// Golf-style marks: circle under par, square over par.
+function scoreCell(score, par) {
+  if (score === undefined) return '–';
+  const cls = score < par ? 'under' : score > par ? 'over' : 'even';
+  return `<span class="mark ${cls}">${score}</span>`;
+}
+
 function scorecardTable(scores) {
   const c = course();
   const rows = c.holes.map((h, i) =>
-    `<tr><td>${i + 1}</td><td>${h.name}</td><td>${h.par}</td><td>${scores[i] ?? '–'}</td></tr>`
+    `<tr><td>${i + 1}</td><td>${h.name}</td><td>${h.par}</td><td>${scoreCell(scores[i], h.par)}</td></tr>`
   ).join('');
   const played = scores.filter(s => s !== undefined);
   return `<table><thead><tr><th>#</th><th>Hole</th><th>Par</th><th>Score</th></tr></thead>` +
@@ -290,6 +393,8 @@ function showTitle() {
   game.strokes = 0;
   game.ball.x = hole().start[0];
   game.ball.y = hole().start[1];
+  clearToasts();
+  document.body.classList.add('menu');
   setTheme(course().theme);
   updateHud();
   const cards = COURSES.map((c, i) => {
@@ -324,13 +429,17 @@ function showMenu() {
   );
 }
 
+function canRestart() {
+  return !game.paused && (game.state === 'aim' || game.state === 'rolling');
+}
+
 const $ = id => document.getElementById(id);
 
 function showOverlay(html) {
   $('card').innerHTML = html;
   $('overlay').classList.add('show');
   const first = $('card').querySelector('button:not([disabled])');
-  if (first) first.focus();
+  if (first) first.focus({ preventScroll: true });
 }
 
 function hideOverlay() {
@@ -360,6 +469,7 @@ $('card').addEventListener('change', e => {
 });
 
 $('menu-btn').addEventListener('click', showMenu);
+$('restart-btn').addEventListener('click', () => { if (canRestart()) startHole(game.holeIndex); });
 
 function updateHud() {
   $('hud-hole').textContent = game.holeIndex + 1;
@@ -370,13 +480,43 @@ function updateHud() {
   $('hud-total').textContent = total() + (game.state === 'done' ? 0 : game.strokes);
 }
 
-let toastTimer;
-function toast(msg) {
+// Toasts queue up and sit at the top of the course.
+const toastQueue = [];
+let toastTimer = null;
+
+function toast(msg, ms = 1800, now = false) {
+  if (now) clearToasts();
+  toastQueue.push({ msg, ms });
+  if (!toastTimer) nextToast();
+}
+
+function nextToast() {
   const el = $('toast');
-  el.textContent = msg;
+  const item = toastQueue.shift();
+  if (!item) {
+    toastTimer = null;
+    el.classList.remove('show');
+    return;
+  }
+  el.textContent = item.msg;
+  positionToast();
   el.classList.add('show');
+  toastTimer = setTimeout(nextToast, item.ms);
+}
+
+function clearToasts() {
+  toastQueue.length = 0;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
+  toastTimer = null;
+  $('toast').classList.remove('show');
+}
+
+function positionToast() {
+  const r = canvas.getBoundingClientRect();
+  const el = $('toast');
+  el.style.top = `${r.top + 12}px`;
+  el.style.left = `${r.left + r.width / 2}px`;
+  el.style.maxWidth = `${Math.max(200, r.width - 24)}px`;
 }
 
 // ---- Sound ----------------------------------------------------------------
@@ -412,40 +552,99 @@ const sfx = {
     lastWallSound = game.t;
     tone(300, 0.05, 'square', 0.06 * Math.min(1, impact / 500));
   },
-  cup: () => { tone(660, 0.12, 'sine', 0.2); tone(990, 0.25, 'sine', 0.2, 0.1); },
+  cup: () => { tone(660, 0.12, 'sine', 0.2); tone(990, 0.25, 'sine', 0.2, 0.1); tone(1320, 0.3, 'sine', 0.12, 0.22); },
   splash: () => { tone(140, 0.35, 'sawtooth', 0.08); tone(90, 0.4, 'sine', 0.15); },
 };
 
-// ---- Input ----------------------------------------------------------------
+// ---- View: scaling and portrait rotation ----------------------------------
+// The world is always 900x600. When the screen is taller than it is wide and
+// a sideways course would be bigger, the whole world is drawn rotated 90°
+// (world left edge at the bottom of the screen).
 
 const canvas = $('game');
 const ctx = canvas.getContext('2d');
+const view = { rotated: false, scale: 1, dpr: 1, signShown: false };
 
-function toWorld(e) {
-  const r = canvas.getBoundingClientRect();
-  return { x: ((e.clientX - r.left) / r.width) * W, y: ((e.clientY - r.top) / r.height) * H };
+function resize() {
+  const wrap = $('wrap');
+  const hud = $('hud');
+  const hint = $('hint');
+  const ws = getComputedStyle(wrap);
+  const gap = parseFloat(ws.rowGap) || 10;
+  const padX = parseFloat(ws.paddingLeft) + parseFloat(ws.paddingRight);
+  const padY = parseFloat(ws.paddingTop) + parseFloat(ws.paddingBottom);
+  let availW = innerWidth - padX, availH = innerHeight - padY;
+  const hintH = hint.offsetParent ? hint.offsetHeight + gap : 0;
+  if (ws.flexDirection === 'row') {
+    availW -= hud.offsetWidth + gap;
+    availH -= hintH;
+  } else {
+    availH -= hud.offsetHeight + gap + hintH;
+  }
+
+  const wide = Math.min(availW / W, availH / H);
+  const tall = Math.min(availW / H, availH / W);
+  view.rotated = tall > wide * 1.1;
+  view.scale = Math.max(0.2, view.rotated ? tall : wide);
+  view.dpr = window.devicePixelRatio || 1;
+  view.signShown = !view.rotated && !!(game.state !== 'menu' && hole().label);
+
+  const cssW = (view.rotated ? H : W) * view.scale;
+  const cssH = (view.rotated ? W : H) * view.scale;
+  canvas.style.width = `${cssW}px`;
+  canvas.style.height = `${cssH}px`;
+  canvas.width = Math.round(cssW * view.dpr);
+  canvas.height = Math.round(cssH * view.dpr);
+  if (toastTimer) positionToast();
 }
+
+function worldTransform() {
+  const s = view.scale * view.dpr;
+  if (view.rotated) ctx.setTransform(0, -s, s, 0, 0, W * s);
+  else ctx.setTransform(s, 0, 0, s, 0, 0);
+}
+
+function toWorld(clientX, clientY) {
+  const r = canvas.getBoundingClientRect();
+  if (view.rotated) {
+    const u = ((clientX - r.left) / r.width) * H;
+    const v = ((clientY - r.top) / r.height) * W;
+    return { x: W - v, y: u };
+  }
+  return { x: ((clientX - r.left) / r.width) * W, y: ((clientY - r.top) / r.height) * H };
+}
+
+function toScreen(x, y) {
+  return view.rotated ? { x: y * view.scale, y: (W - x) * view.scale } : { x: x * view.scale, y: y * view.scale };
+}
+
+window.addEventListener('resize', resize);
+if (document.fonts && document.fonts.ready) document.fonts.ready.then(resize);
+
+// ---- Input ----------------------------------------------------------------
+// Power comes from how far the pointer travels on screen (CSS px), so it feels
+// the same on a phone and a monitor; direction comes from the world.
 
 function dragShot() {
   const d = game.drag;
-  const dx = d.sx - d.x, dy = d.sy - d.y;
+  const px = Math.hypot(d.cx - d.scx, d.cy - d.scy);
+  const a = toWorld(d.scx, d.scy), b = toWorld(d.cx, d.cy);
+  const dx = a.x - b.x, dy = a.y - b.y;
   const len = Math.hypot(dx, dy);
-  return { dx, dy, len, power: Math.min(len, MAX_DRAG) / MAX_DRAG };
+  return { dx, dy, len, power: Math.min(px, MAX_DRAG_PX) / MAX_DRAG_PX };
 }
 
 canvas.addEventListener('pointerdown', e => {
   ensureAudio();
   if (game.state !== 'aim' || game.paused) return;
   canvas.setPointerCapture(e.pointerId);
-  const p = toWorld(e);
-  game.drag = { sx: p.x, sy: p.y, x: p.x, y: p.y };
+  game.drag = { scx: e.clientX, scy: e.clientY, cx: e.clientX, cy: e.clientY };
 });
 
 canvas.addEventListener('pointermove', e => {
   if (!game.drag) return;
-  const p = toWorld(e);
-  game.drag.x = p.x;
-  game.drag.y = p.y;
+  game.drag.cx = e.clientX;
+  game.drag.cy = e.clientY;
 });
 
 canvas.addEventListener('pointerup', () => {
@@ -463,24 +662,10 @@ window.addEventListener('keydown', e => {
     else if (game.paused) { game.paused = false; hideOverlay(); }
     else showMenu();
   }
-  if ((e.key === 'r' || e.key === 'R') && (game.state === 'aim' || game.state === 'rolling') && !game.paused) {
-    startHole(game.holeIndex);
-  }
+  if ((e.key === 'r' || e.key === 'R') && canRestart()) startHole(game.holeIndex);
 });
 
 // ---- Rendering ------------------------------------------------------------
-
-function resize() {
-  const chrome = $('hud').offsetHeight + $('hint').offsetHeight + 44;
-  const scale = Math.max(0.2, Math.min((innerWidth - 32) / W, (innerHeight - chrome) / H));
-  const dpr = window.devicePixelRatio || 1;
-  canvas.style.width = `${W * scale}px`;
-  canvas.style.height = `${H * scale}px`;
-  canvas.width = Math.round(W * scale * dpr);
-  canvas.height = Math.round(H * scale * dpr);
-  ctx.setTransform(scale * dpr, 0, 0, scale * dpr, 0, 0);
-}
-window.addEventListener('resize', resize);
 
 function render() {
   const h = hole();
@@ -491,37 +676,51 @@ function render() {
     const { dx, dy, len, power } = dragShot();
     if (len > 0.5) aim = { ux: dx / len, uy: dy / len, power };
   }
+  let r = Math.max(BALL_R, MIN_BALL_PX / view.scale);
+  if (game.state === 'sinking') r *= 1 - 0.6 * game.timer;
+
+  worldTransform();
   theme().draw(ctx, {
     hole: h,
     holeIndex: game.holeIndex,
-    t: game.t,
-    ball: {
-      x: b.x, y: b.y,
-      r: game.state === 'sinking' ? BALL_R * (1 - 0.6 * game.sinkT) : BALL_R,
-      visible: game.state !== 'done' && game.state !== 'menu',
-    },
+    t: reducedMotion.matches ? 0 : game.t,   // decoration only; obstacles come pre-placed below
+    rotated: view.rotated,
+    showLabel: view.signShown,
+    ball: { x: b.x, y: b.y, r, visible: ['aim', 'rolling', 'sinking'].includes(game.state) },
     spinners: spinnerSegments(h, game.t),
     movers: moverStates(h, game.t),
     aim,
     flagAlpha: Math.max(0, Math.min(1, (Math.hypot(b.x - cx, b.y - cy) - 40) / 60)),
   });
-
-  for (const p of particles) {
-    ctx.save();
-    ctx.globalAlpha = Math.max(0, p.life);
-    ctx.translate(p.x, p.y);
-    ctx.rotate(p.rot);
-    ctx.fillStyle = p.color;
-    ctx.fillRect(-4, -2.5, 8, 5);
-    ctx.restore();
-  }
+  drawParticles();
 
   if (aim) {
-    const hue = 120 - aim.power * 120;   // green -> red
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
-    ctx.beginPath(); ctx.roundRect(W - 154, H - 34, 138, 16, 8); ctx.fill();
-    ctx.fillStyle = `hsl(${hue}, 85%, 55%)`;
-    ctx.beginPath(); ctx.roundRect(W - 150, H - 30, Math.max(8, 130 * aim.power), 8, 4); ctx.fill();
+    // Power ring around the ball (world space)...
+    const hue = 120 - aim.power * 120;
+    const color = `hsl(${hue}, 85%, 50%)`;
+    ctx.lineCap = 'round';
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.lineWidth = 5;
+    circle(ctx, b.x, b.y, r + 9); ctx.stroke();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, r + 9, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * Math.max(0.02, aim.power));
+    ctx.stroke();
+
+    // ...and an upright percentage label next to it (screen space).
+    const p = toScreen(b.x, b.y);
+    ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+    const label = `${Math.round(aim.power * 100)}%`;
+    ctx.font = '700 13px system-ui, -apple-system, sans-serif';
+    const tw = ctx.measureText(label).width + 12;
+    const ly = p.y - (r + 9) * view.scale - 22 < 4 ? p.y + (r + 9) * view.scale + 6 : p.y - (r + 9) * view.scale - 22;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.6)';
+    ctx.beginPath(); ctx.roundRect(p.x - tw / 2, ly, tw, 18, 9); ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, p.x, ly + 13);
+    ctx.textAlign = 'left';
   }
 }
 
@@ -543,9 +742,8 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
-resize();
 showTitle();
 requestAnimationFrame(frame);
 
 // Handy for debugging from the console and for automated tests.
-window.miniGolf = { game, COURSES, shoot, step, startCourse, startHole, save };
+window.miniGolf = { game, COURSES, shoot, step, startCourse, startHole, save, view, toWorld };

@@ -213,7 +213,7 @@ const THEMES = {};
       }
     }
 
-    if (hole.label) sign(ctx, hole.label[0], hole.label[1], `${hole.name} · Par ${hole.par}`);
+    if (v.showLabel) sign(ctx, hole.label[0], hole.label[1], `${hole.name} · Par ${hole.par}`);
 
     // Mowed fairway and its zones
     ctx.save();
@@ -248,18 +248,20 @@ const THEMES = {};
     if (v.flagAlpha > 0) {
       ctx.save();
       ctx.globalAlpha = v.flagAlpha;
+      ctx.translate(cx, cy);
+      if (v.rotated) ctx.rotate(Math.PI / 2);   // keep the pin pointing up on screen
       ctx.strokeStyle = 'rgba(20, 60, 20, 0.3)';
       ctx.lineWidth = 3;
-      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx + 30, cy + 22); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(30, 22); ctx.stroke();
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx, cy - 52); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -52); ctx.stroke();
       const wave = Math.sin(t * 4) * 3;
       ctx.fillStyle = '#e8413c';
       ctx.beginPath();
-      ctx.moveTo(cx, cy - 52);
-      ctx.quadraticCurveTo(cx + 14, cy - 50 + wave, cx + 28, cy - 44);
-      ctx.quadraticCurveTo(cx + 14, cy - 38 - wave, cx, cy - 36);
+      ctx.moveTo(0, -52);
+      ctx.quadraticCurveTo(14, -50 + wave, 28, -44);
+      ctx.quadraticCurveTo(14, -38 - wave, 0, -36);
       ctx.closePath();
       ctx.fill();
       ctx.restore();
@@ -340,5 +342,15 @@ const THEMES = {};
   THEMES.tiny = {
     draw,
     confetti: ['#ff8fb1', '#fff27a', '#ffffff', '#8fd16f'],
+    splash: ['#4fa3d9', '#bfe3f7', '#ffffff'],
+    waterToast: 'Splash! +1 stroke',
+    tips: {
+      sand: 'Sand bunker: slows the ball right down',
+      water: 'Pond: +1 stroke and the ball goes back',
+      ice: 'Ice: the ball slides much further',
+      slope: 'Hill: pushes the ball the way the arrows point',
+      spinner: 'Windmill: time your shot between the sails',
+      sheep: 'Sheep wander about and will bump your ball',
+    },
   };
 })();

@@ -19,18 +19,18 @@ A top-down 2D mini golf game in plain HTML canvas: no dependencies, no build ste
 
 | # | Hole | Par | What's on it |
 |---|------|-----|--------------|
-| 1 | Coffee Break | 3 | Pencil walls, a coffee spill (sand) and an ink blot (water) |
+| 1 | Coffee Break | 3 | Pencil walls, eraser shavings (sand) and an ink blot (water) |
 | 2 | Pen Spin | 3 | Two spinning pens and a slick plastic sleeve |
 | 3 | Desk Fan | 4 | A fan blowing across the top and a rolling tape roll |
 
-Best scores and unlocks are saved in your browser. Add `?unlock` to the URL to unlock every course.
+Best scores, unlocks and which tips you've seen are saved in your browser. Add `?unlock` to the URL to unlock every course.
 
 ## Controls
 
-- **Drag back** from anywhere on the course and release to putt. Longer drag = more power.
-- **☰ / Esc** opens the menu with the scorecard, restart and course select.
-- **R** restarts the current hole.
-- Works with mouse or touch. On a phone, turning it sideways gives a bigger course.
+- **Drag back** from anywhere on the course and release to putt. A 140px drag is full power on any screen; a ring and a percentage around the ball show the power.
+- **☰ / Esc** opens the menu with the scorecard, restart and course select. **↻ / R** restarts the current hole.
+- Works with mouse or touch. On a phone held upright the course turns 90° to fill the screen; held sideways, the scoreboard moves to a side rail.
+- The first time you meet each hazard or obstacle, a tip explains what it does.
 
 ## Run locally
 

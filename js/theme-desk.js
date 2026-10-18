@@ -132,16 +132,24 @@
   function drawZone(ctx, z, t) {
     const cx = z.x + z.w / 2, cy = z.y + z.h / 2;
     if (z.type === 'sand') {
-      // Coffee spill
+      // Pile of eraser shavings: dry, crumbly, slow
       blob(ctx, cx, cy, z.w / 2, z.h / 2, z.x * 0.013, 0.07);
-      ctx.fillStyle = 'rgba(96, 52, 20, 0.92)';
+      ctx.fillStyle = 'rgba(244, 170, 196, 0.45)';
       ctx.fill();
-      ctx.strokeStyle = 'rgba(60, 30, 10, 0.9)';
-      ctx.lineWidth = 2.5;
-      ctx.stroke();
-      blob(ctx, cx - z.w * 0.12, cy - z.h * 0.12, z.w * 0.18, z.h * 0.1, 4, 0.2);
-      ctx.fillStyle = 'rgba(255, 230, 200, 0.18)';
-      ctx.fill();
+      ctx.save();
+      ctx.clip();
+      ctx.lineCap = 'round';
+      const count = Math.round((z.w * z.h) / 70);
+      for (let i = 0; i < count; i++) {
+        const a = rand(z.x + i) * Math.PI * 2, d = Math.sqrt(rand(z.y + i * 1.3));
+        const px = cx + Math.cos(a) * d * z.w / 2, py = cy + Math.sin(a) * d * z.h / 2;
+        ctx.strokeStyle = i % 5 === 0 ? 'rgba(150, 150, 160, 0.8)' : i % 2 ? '#f08ab0' : '#f7b8cf';
+        ctx.lineWidth = 2.2;
+        ctx.beginPath();
+        ctx.arc(px, py, 2.5 + rand(i) * 2, rand(i + 0.5) * 6, rand(i + 0.5) * 6 + 2.6);
+        ctx.stroke();
+      }
+      ctx.restore();
     } else if (z.type === 'water') {
       // Ink blot
       blob(ctx, cx, cy, z.w / 2, z.h / 2, z.y * 0.017, 0.07 + Math.sin(t * 2) * 0.01);
@@ -255,11 +263,11 @@
     (hole.zones || []).forEach(z => drawZone(ctx, z, t));
     ctx.restore();
 
-    if (hole.label) stickyNote(ctx, hole.label[0], hole.label[1], hole, v.holeIndex);
+    if (v.showLabel) stickyNote(ctx, hole.label[0], hole.label[1], hole, v.holeIndex);
 
     // Masking-tape tee
     ctx.save();
-    ctx.translate(hole.start[0], hole.start[1] + 2);
+    ctx.translate(hole.start[0], hole.start[1] + 22);   // beside the ball, not under it
     ctx.rotate(0.04);
     ctx.fillStyle = 'rgba(236, 222, 180, 0.9)';
     ctx.fillRect(-26, -9, 52, 18);
@@ -306,16 +314,18 @@
     if (v.flagAlpha > 0) {
       ctx.save();
       ctx.globalAlpha = v.flagAlpha;
+      ctx.translate(cx, cy);
+      if (v.rotated) ctx.rotate(Math.PI / 2);   // keep the flag upright on screen
       ctx.strokeStyle = '#d8b77f';
       ctx.lineWidth = 2.5;
-      ctx.beginPath(); ctx.moveTo(cx - 2, cy - 4); ctx.lineTo(cx - 2, cy - 52); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(-2, -4); ctx.lineTo(-2, -52); ctx.stroke();
       dropShadow(ctx, true);
       ctx.fillStyle = '#fbcfe8';
-      ctx.fillRect(cx - 1, cy - 54, 30, 22);
+      ctx.fillRect(-1, -54, 30, 22);
       dropShadow(ctx, false);
       ctx.fillStyle = '#2a2118';
       ctx.font = `700 18px ${HAND}`;
-      ctx.fillText(String(v.holeIndex + 1), cx + 9, cy - 37);
+      ctx.fillText(String(v.holeIndex + 1), 9, -37);
       ctx.restore();
     }
 
@@ -367,6 +377,9 @@
       ctx.fillStyle = '#f6f4ee';
       ctx.fill();
       dropShadow(ctx, false);
+      ctx.strokeStyle = 'rgba(50, 35, 20, 0.75)';
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
       const k = b.r / 7;
       ctx.strokeStyle = 'rgba(120, 120, 120, 0.55)';
       ctx.lineWidth = 0.9;
@@ -400,5 +413,15 @@
   THEMES.desk = {
     draw,
     confetti: ['#fde68a', '#fbcfe8', '#bae6fd', '#ffffff', '#e23b3b'],
+    splash: ['#16205a', '#3346a8', '#6b7fd8'],
+    waterToast: 'Inked! +1 stroke',
+    tips: {
+      sand: 'Eraser shavings: slow the ball right down',
+      water: 'Ink blot: +1 stroke and the ball goes back',
+      ice: 'Plastic sleeve: super slippery',
+      slope: 'Desk fan: blows the ball the way the streaks go',
+      spinner: 'Spinning pens: time your shot',
+      tape: 'The tape roll slides back and forth and bumps your ball',
+    },
   };
 })();
