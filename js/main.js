@@ -39,6 +39,9 @@ function writeSave() {
 
 const isUnlocked = course => !course.bonus || save.unlocked.includes(course.id);
 const coursePar = course => course.holes.reduce((a, h) => a + h.par, 0);
+// Best scores are kept per course layout, so adding holes doesn't compare a
+// 9-hole round with an old 4-hole best.
+const bestKey = course => `${course.id}@${course.holes.length}`;
 
 // ---- State ----------------------------------------------------------------
 
@@ -379,9 +382,9 @@ function finishCourse() {
   clearToasts();
   const c = course();
   const score = total();
-  const prevBest = save.best[c.id];
+  const prevBest = save.best[bestKey(c)];
   const newBest = prevBest === undefined || score < prevBest;
-  if (newBest) { save.best[c.id] = score; sfx.fanfare(); }
+  if (newBest) { save.best[bestKey(c)] = score; sfx.fanfare(); }
   const unlocks = COURSES.filter(o => o.bonus && !save.unlocked.includes(o.id) && o.id !== c.id);
   unlocks.forEach(o => save.unlocked.push(o.id));
   writeSave();
@@ -428,7 +431,7 @@ function showTitle() {
   setTheme(course().theme);
   updateHud();
   const cards = COURSES.map((c, i) => {
-    const best = save.best[c.id];
+    const best = save.best[bestKey(c)];
     const meta = `${c.holes.length} holes · Par ${coursePar(c)}${best !== undefined ? ` · Best ${best}` : ''}`;
     if (!isUnlocked(c)) {
       return `<button class="course locked" disabled><span class="cname">🔒 ${c.name}</span>` +

@@ -6,24 +6,32 @@ A top-down 2D mini golf game in plain HTML canvas: no dependencies, no build ste
 
 ## Courses
 
-**Tiny World** (main course, 4 holes, par 12): floating islands with hedges, trees, a duck pond and wandering sheep.
+**Tiny World** (main course, 9 holes, par 26): floating islands with hedges, trees, ponds, ice, windmills and wandering sheep.
 
 | # | Hole | Par | What's on it |
 |---|------|-----|--------------|
 | 1 | Meadow Dogleg | 2 | Bank shots off an angled corner |
 | 2 | Duck Pond | 3 | Pond (+1 stroke, ball returns) and two sand bunkers |
-| 3 | Windmill Hill | 3 | Ice, windmill sails to time, and a hill that pushes sideways |
-| 4 | Sheep Crossing | 4 | Hedge maze with two wandering sheep that bump your ball |
+| 3 | Rolling Hills | 2 | Two hills pushing opposite ways |
+| 4 | Zigzag Brook | 3 | Step-shaped fairway with a brook at the turn |
+| 5 | Windmill Hill | 3 | Ice, windmill sails to time, and a hill that pushes sideways |
+| 6 | Ice Rink | 2 | Slide across the ice into a hedge pocket |
+| 7 | Narrow Bridge | 3 | A strip of grass between two ponds, then a sheep |
+| 8 | Windmill Twins | 3 | Two windmills turning opposite ways |
+| 9 | Sheep Crossing | 4 | Hedge maze with two wandering sheep that bump your ball |
 
-**Desk Course** (bonus, 3 holes, par 9): mini golf on a messy desk. Unlocked by finishing Tiny World.
+**Desk Course** (bonus, 6 holes, par 19): mini golf on a messy desk. Unlocked by finishing Tiny World.
 
 | # | Hole | Par | What's on it |
 |---|------|-----|--------------|
 | 1 | Coffee Break | 3 | Pencil and eraser walls, eraser shavings (sand) and an ink blot (water) |
-| 2 | Pen Spin | 3 | Two spinning pens and a slick plastic sleeve |
-| 3 | Desk Fan | 3 | A fan blowing across the top and a sliding tape roll |
+| 2 | Ruler Run | 3 | Pencil slalom with a slick plastic sleeve |
+| 3 | Pen Spin | 3 | Two spinning pens and a plastic sleeve |
+| 4 | Ink Spill | 3 | Three ink blots and a spinning pen guarding the mug |
+| 5 | Desk Fan | 3 | A fan blowing across the top and a sliding tape roll |
+| 6 | Deadline | 4 | Around the U, through the fan's breeze, past a pen |
 
-Best scores, unlocks and which tips you've seen are saved in your browser. Add `?unlock` to the URL to unlock every course.
+Best scores (per course layout), unlocks and which tips you've seen are saved in your browser. Add `?unlock` to the URL to unlock every course.
 
 ## Controls
 
