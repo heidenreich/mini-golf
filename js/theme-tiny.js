@@ -257,12 +257,23 @@
     // Hedges
     wallSegments(hole).forEach(([a, b], i) => hedge(ctx, a, b, seed + i * 100));
 
-    // Cup and pin flag
+    // Cup: a pale collar, then a hole shaded darker toward the near edge, with
+    // the far inner wall catching the light so it reads as deep
     const [cx, cy] = hole.cup;
-    ctx.fillStyle = '#e9f6dc';
-    circle(ctx, cx, cy, CUP_R + 2); ctx.fill();
-    ctx.fillStyle = '#2a3b20';
+    ctx.fillStyle = '#eef8e4';
+    circle(ctx, cx, cy, CUP_R + 3.5); ctx.fill();
+    ctx.strokeStyle = 'rgba(50, 100, 35, 0.35)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    const g = ctx.createRadialGradient(cx - 3, cy - 4, 1, cx, cy, CUP_R);
+    g.addColorStop(0, '#05080a');
+    g.addColorStop(0.75, '#1b2614');
+    g.addColorStop(1, '#3d5230');
+    ctx.fillStyle = g;
     circle(ctx, cx, cy, CUP_R); ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+    ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cx, cy, CUP_R - 1.6, Math.PI * 0.08, Math.PI * 0.62); ctx.stroke();
   }
 
   function drawDynamic(ctx, v) {
@@ -282,12 +293,22 @@
       ctx.strokeStyle = '#ffffff';
       ctx.lineWidth = 2.5;
       ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, -52); ctx.stroke();
-      const wave = Math.sin(t * 4) * 3;
+      // The flag ripples: two waves travelling out along the cloth
+      const w1 = Math.sin(t * 5.5) * 4.5, w2 = Math.sin(t * 5.5 - 1.6) * 3.5;
+      const tip = 30 + Math.sin(t * 2.7) * 2;
       ctx.fillStyle = '#e8413c';
       ctx.beginPath();
-      ctx.moveTo(0, -52);
-      ctx.quadraticCurveTo(14, -50 + wave, 28, -44);
-      ctx.quadraticCurveTo(14, -38 - wave, 0, -36);
+      ctx.moveTo(0, -53);
+      ctx.bezierCurveTo(10, -53 + w1, 20, -50 + w2, tip, -45 + w2 * 0.5);
+      ctx.bezierCurveTo(20, -39 + w2, 10, -37 + w1, 0, -35);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.12)';
+      ctx.beginPath();
+      ctx.moveTo(0, -53);
+      ctx.bezierCurveTo(10, -53 + w1, 14, -51 + w2, 16, -48 + w2 * 0.5);
+      ctx.lineTo(16, -42 + w2 * 0.5);
+      ctx.bezierCurveTo(10, -38 + w1, 6, -36, 0, -35);
       ctx.closePath();
       ctx.fill();
       ctx.restore();
@@ -329,16 +350,29 @@
       circle(ctx, s.cx, s.cy, 4); ctx.fill();
     }
 
-    // Ball
+    // Ball: trail, shadow, then a white ball whose dimples roll over the top
+    // in the direction of travel, squashed briefly by hard hits
     const b = v.ball;
     if (b.visible) {
+      drawBallTrail(ctx, b, '#ffffff');
       ctx.fillStyle = 'rgba(20, 60, 20, 0.3)';
       ctx.beginPath(); ctx.ellipse(b.x + 3, b.y + 4, b.r, b.r * 0.75, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.save();
+      ballTransform(ctx, b);
       ctx.fillStyle = '#ffffff';
-      circle(ctx, b.x, b.y, b.r); ctx.fill();
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.12)';
+      circle(ctx, 0, 0, b.r); ctx.fill();
+      const ux = Math.cos(b.dir), uy = Math.sin(b.dir);
+      ctx.fillStyle = 'rgba(30, 50, 40, 0.22)';
+      for (let k = 0; k < 4; k++) {
+        const ph = b.spin + k * 1.6, front = Math.sin(ph);
+        if (front <= 0) continue;
+        const along = -Math.cos(ph) * b.r * 0.62, side = (k % 2 ? 1 : -1) * b.r * (0.18 + 0.12 * k / 3);
+        circle(ctx, ux * along - uy * side, uy * along + ux * side, b.r * 0.17 * front); ctx.fill();
+      }
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.14)';
       ctx.lineWidth = 1;
-      ctx.stroke();
+      circle(ctx, 0, 0, b.r); ctx.stroke();
+      ctx.restore();
     }
 
     // Aim: white dotted line
@@ -373,6 +407,7 @@
     drawDynamic,
     confetti: ['#ff8fb1', '#fff27a', '#ffffff', '#8fd16f'],
     splash: ['#4fa3d9', '#bfe3f7', '#ffffff'],
+    impact: { wall: ['#1f5f28', '#2f7a35', '#fff27a', '#ff8fb1'], sand: ['#b08f45', '#c9a85c', '#8a6d30'] },
     waterToast: 'Splash! +1 stroke',
     tips: {
       sand: 'Sand bunker: slows the ball right down',

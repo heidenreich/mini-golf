@@ -9,6 +9,7 @@ const W = 900, H = 600;   // world size; the canvas scales to fit
 //   drawStatic(ctx, view)    drawn once per hole into a cached layer
 //   drawDynamic(ctx, view)   drawn every frame on top: flag, obstacles, ball, aim
 //   confetti, splash         particle colours for sinking and water
+//   impact                   debris colours: { wall: [...], sand: [...] }
 //   waterToast               message when the ball lands in water
 //   tips                     first-encounter tip per zone type, 'spinner' and mover kind
 const THEMES = {};
@@ -87,6 +88,27 @@ function outwardEdges(shape) {
     const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
     return { a, b, len, nx: (sign * (b[1] - a[1])) / len, ny: (sign * -(b[0] - a[0])) / len };
   });
+}
+
+// Ball helpers shared by the themes: a fading trail on fast shots, and the
+// squash on impact (flattened along the hit normal, volume roughly kept).
+function drawBallTrail(ctx, ball, color) {
+  ctx.fillStyle = color;
+  for (const p of ball.trail) {
+    ctx.globalAlpha = p.a;
+    circle(ctx, p.x, p.y, ball.r * p.s);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+function ballTransform(ctx, ball) {
+  ctx.translate(ball.x, ball.y);
+  if (ball.squash > 0) {
+    ctx.rotate(ball.squashAng);
+    ctx.scale(1 - 0.22 * ball.squash, 1 + 0.14 * ball.squash);
+    ctx.rotate(-ball.squashAng);
+  }
 }
 
 function wallSegments(hole) {

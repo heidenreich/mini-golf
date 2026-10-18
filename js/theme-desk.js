@@ -310,10 +310,20 @@
     dropShadow(ctx, false);
     ctx.fillStyle = '#2f7d5b';
     ctx.beginPath(); ctx.roundRect(cx + 19, cy - 2.5, 7, 5, 2.5); ctx.fill();
-    ctx.fillStyle = '#3b200e';
+    // Coffee sits below the rim: darker at the edge where the mug wall shades it
+    ctx.fillStyle = '#d9d3c6';
+    circle(ctx, cx, cy, 15); ctx.fill();
+    const g = ctx.createRadialGradient(cx - 2, cy - 3, 1, cx, cy, 13);
+    g.addColorStop(0, '#5a3218');
+    g.addColorStop(0.7, '#3b200e');
+    g.addColorStop(1, '#1e0f06');
+    ctx.fillStyle = g;
     circle(ctx, cx, cy, 13); ctx.fill();
-    ctx.fillStyle = 'rgba(255, 220, 180, 0.25)';
-    ctx.beginPath(); ctx.ellipse(cx - 4, cy - 5, 5, 2.5, -0.5, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255, 230, 200, 0.25)';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath(); ctx.arc(cx, cy, 10, Math.PI * 1.1, Math.PI * 1.6); ctx.stroke();
+    ctx.fillStyle = 'rgba(255, 220, 180, 0.3)';
+    ctx.beginPath(); ctx.ellipse(cx - 4, cy - 5, 4.5, 2.2, -0.5, 0, Math.PI * 2); ctx.fill();
   }
 
   function drawDynamic(ctx, v) {
@@ -339,13 +349,21 @@
       ctx.strokeStyle = '#d8b77f';
       ctx.lineWidth = 2.5;
       ctx.beginPath(); ctx.moveTo(-2, -4); ctx.lineTo(-2, -52); ctx.stroke();
+      // The sticky-note flag flutters on the toothpick
+      ctx.save();
+      ctx.translate(-1, -54);
+      ctx.transform(1, Math.sin(t * 4.2) * 0.12, 0, 1, 0, 0);
+      ctx.rotate(Math.sin(t * 2.3) * 0.05);
       dropShadow(ctx, true);
       ctx.fillStyle = '#fbcfe8';
-      ctx.fillRect(-1, -54, 30, 22);
+      ctx.fillRect(0, 0, 30, 22);
       dropShadow(ctx, false);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.08)';
+      ctx.fillRect(0, 0, 30, 5);
       ctx.fillStyle = '#2a2118';
       ctx.font = `700 18px ${HAND}`;
-      ctx.fillText(String(v.holeIndex + 1), 9, -37);
+      ctx.fillText(String(v.holeIndex + 1), 10, 17);
+      ctx.restore();
       ctx.restore();
     }
 
@@ -389,9 +407,14 @@
       circle(ctx, s.cx - 2.5, s.cy - 2.5, 2.5); ctx.fill();
     }
 
-    // Crumpled paper ball
+    // Crumpled paper ball: tumbles as it rolls, squashes on hard hits
     const b = v.ball;
     if (b.visible) {
+      drawBallTrail(ctx, b, '#f6f4ee');
+      ctx.save();
+      ballTransform(ctx, b);
+      ctx.rotate(b.spin * 0.6);
+      ctx.translate(-b.x, -b.y);
       dropShadow(ctx, true);
       blob(ctx, b.x, b.y, b.r + 1.5, b.r + 1.5, 3.3, 0.12);
       ctx.fillStyle = '#f6f4ee';
@@ -406,6 +429,7 @@
       for (const [p, q, r, s] of [[-5, -2, 1, -5], [-1, 1, 5, 3], [-4, 4, 0, 1], [2, -4, 4, 0]]) {
         ctx.beginPath(); ctx.moveTo(b.x + p * k, b.y + q * k); ctx.lineTo(b.x + r * k, b.y + s * k); ctx.stroke();
       }
+      ctx.restore();
     }
 
     // Aim: a sketchy pencil arrow
@@ -435,6 +459,7 @@
     drawDynamic,
     confetti: ['#fde68a', '#fbcfe8', '#bae6fd', '#ffffff', '#e23b3b'],
     splash: ['#16205a', '#3346a8', '#6b7fd8'],
+    impact: { wall: ['#3a3a3a', '#c08a52', '#f08a9b'], sand: ['#e0609a', '#f08ab0', '#7a7a86'] },
     waterToast: 'Inked! +1 stroke',
     tips: {
       sand: 'Eraser shavings: slow the ball right down',

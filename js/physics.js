@@ -96,6 +96,8 @@ function bounce(b, cx, cy, nx, ny, R, svx, svy) {
   const e = -vn < SOFT_IMPACT ? 0 : RESTITUTION;
   b.vx = svx + tvx * 0.95 - vn * e * nx;
   b.vy = svy + tvy * 0.95 - vn * e * ny;
+  // Where and how hard it hit, for impact effects
+  b.hit = { x: b.x - nx * BALL_R, y: b.y - ny * BALL_R, nx, ny, v: -vn };
   return -vn;
 }
 
@@ -132,14 +134,16 @@ function collideSegments(b, segs) {
 
 function collideMovers(b, movers) {
   let impact = 0;
-  for (const s of movers) {
+  movers.forEach((s, i) => {
     const R = BALL_R + s.m.r;
     const dx = b.x - s.x, dy = b.y - s.y;
     const d2 = dx * dx + dy * dy;
-    if (d2 >= R * R) continue;
+    if (d2 >= R * R) return;
     const d = Math.sqrt(d2);
     const nx = d > 1e-6 ? dx / d : 1, ny = d > 1e-6 ? dy / d : 0;
-    impact = Math.max(impact, bounce(b, s.x, s.y, nx, ny, R, s.vx, s.vy));
-  }
+    const v = bounce(b, s.x, s.y, nx, ny, R, s.vx, s.vy);
+    if (v > 0) b.hit.mover = i;
+    impact = Math.max(impact, v);
+  });
   return impact;
 }

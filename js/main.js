@@ -60,6 +60,12 @@ const game = {
   sinkFrom: null,
   drag: null,
   kbAim: null,                   // keyboard aiming: { angle, power }
+  spin: 0,                       // how far the ball has rolled (radians), for its dimples
+  rollDir: 0,                    // direction it last rolled
+  trail: [],                     // recent positions, for the fast-shot trail
+  squash: null,                  // { t, ang, amt } of the last hard hit
+  bubbles: {},                   // mover index -> time it was bumped
+  lastFx: 0,
 };
 
 const course = () => COURSES[game.courseIndex];
@@ -92,6 +98,9 @@ function startHole(index) {
   game.stillTime = 0;
   game.drag = null;
   game.kbAim = null;
+  game.trail = [];
+  game.squash = null;
+  game.bubbles = {};
   particles.length = 0;
   document.body.classList.remove('menu');
   hideOverlay();
@@ -177,21 +186,32 @@ function step(dt) {
   const segs = boundarySegments(h).concat(spinnerSegments(h, game.t));
   const movers = moverStates(h, game.t);
   const n = Math.max(1, Math.ceil((speed * dt) / (BALL_R * 0.5)));
-  let impact = 0;
+  let impact = 0, wallHit = null;
   for (let i = 0; i < n; i++) {
     b.x += (b.vx * dt) / n;
     b.y += (b.vy * dt) / n;
+    b.hit = null;
     const bump = collideMovers(b, movers);
-    if (bump > 60) sfx.bump(bump);
-    impact = Math.max(impact, collideSegments(b, segs), collideSegments(b, segs));
+    if (bump > 60) { sfx.bump(bump); bumped(b.hit, bump, movers); }
+    b.hit = null;
+    const wall = Math.max(collideSegments(b, segs), collideSegments(b, segs));
+    if (wall > impact) { impact = wall; wallHit = b.hit; }
     if (game.state === 'rolling' && checkCup(dt / n)) return;
   }
-  if (impact > 60) sfx.wall(impact);
+  if (impact > 60) { sfx.wall(impact); hitWall(wallHit, impact); }
   const nowZone = zoneAt(h, b.x, b.y);
   const nowType = nowZone ? nowZone.type : 'grass';
-  if (nowType === 'sand' && game.zoneType !== 'sand' && game.state === 'rolling') sfx.sand();
+  if (nowType === 'sand' && game.zoneType !== 'sand' && game.state === 'rolling') {
+    sfx.sand();
+    if (speed > 100) puff(b.x, b.y, theme().impact.sand, 'grain', 14, 40 + speed * 0.3, Math.atan2(b.vy, b.vx) + Math.PI, 2.2);
+  }
   game.zoneType = nowType;
   speed = Math.hypot(b.vx, b.vy);
+  // Rolling: dimples turn with distance travelled; keep a short trail
+  game.spin += (speed * dt) / BALL_R;
+  if (speed > 5) game.rollDir = Math.atan2(b.vy, b.vx);
+  game.trail.push({ x: b.x, y: b.y, v: speed });
+  if (game.trail.length > 12) game.trail.shift();
 
   if (game.state === 'aim') {
     // At rest. Only a knock from a moving obstacle gets it rolling again.
@@ -294,6 +314,34 @@ function burst(x, y) {
   }
 }
 
+// A small burst of debris from a point: leaves off hedges, sand grains, desk bits.
+function puff(x, y, colors, kind, count, speed, dir, spread) {
+  for (let i = 0; i < count; i++) {
+    const a = dir + (Math.random() - 0.5) * spread, s = speed * (0.4 + Math.random() * 0.8);
+    particles.push({
+      kind, x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s,
+      rot: Math.random() * 6, spin: (Math.random() - 0.5) * 14,
+      life: 1, decay: kind === 'grain' ? 1 / 0.6 : 1 / 0.7, size: 1, color: colors[i % colors.length],
+    });
+  }
+}
+
+function hitWall(hit, impact) {
+  if (!hit || impact < 120 || game.t - game.lastFx < 0.06) return;
+  game.lastFx = game.t;
+  const amt = Math.min(1, impact / 700);
+  game.squash = { t: game.t, ang: Math.atan2(hit.ny, hit.nx), amt };
+  puff(hit.x, hit.y, theme().impact.wall, 'leaf', Math.round(3 + amt * 7), 60 + impact * 0.18, Math.atan2(hit.ny, hit.nx), 2.2);
+  particles.push({ kind: 'flash', x: hit.x, y: hit.y, vx: 0, vy: 0, rot: 0, spin: 0, life: 1, decay: 1 / 0.22, size: 0, color: '#ffffff' });
+}
+
+function bumped(hit, impact, movers) {
+  if (!hit) return;
+  game.squash = { t: game.t, ang: Math.atan2(hit.ny, hit.nx), amt: Math.min(1, impact / 600) };
+  const m = movers[hit.mover];
+  if (m && m.m.kind === 'sheep') game.bubbles[hit.mover] = game.t;
+}
+
 function splash(x, y) {
   const colors = theme().splash;
   for (let i = 0; i < 16; i++) {
@@ -332,6 +380,15 @@ function drawParticles() {
       ctx.fillRect(-4, -2.5, 8, 5);
     } else if (p.kind === 'drop') {
       circle(ctx, p.x, p.y, p.size); ctx.fill();
+    } else if (p.kind === 'leaf') {
+      ctx.translate(p.x, p.y);
+      ctx.rotate(p.rot);
+      ctx.beginPath(); ctx.ellipse(0, 0, 4, 2.2, 0, 0, Math.PI * 2); ctx.fill();
+    } else if (p.kind === 'grain') {
+      circle(ctx, p.x, p.y, 2.3); ctx.fill();
+    } else if (p.kind === 'flash') {
+      ctx.lineWidth = 2;
+      circle(ctx, p.x, p.y, 3 + (1 - a) * 9); ctx.stroke();
     } else {
       ctx.lineWidth = 2.5;
       circle(ctx, p.x, p.y, 8 + (1 - a) * 30); ctx.stroke();
@@ -799,12 +856,35 @@ function viewState() {
     t: reducedMotion.matches ? 0 : game.t,   // decoration only; obstacles come pre-placed below
     rotated: view.rotated,
     showLabel: view.signShown,
-    ball: { x: b.x, y: b.y, r, visible: ['aim', 'rolling', 'sinking'].includes(game.state) },
+    ball: {
+      x: b.x, y: b.y, r, visible: ['aim', 'rolling', 'sinking'].includes(game.state),
+      spin: game.spin, dir: game.rollDir, trail: trailPoints(), ...squashNow(),
+    },
     spinners: spinnerSegments(h, game.t),
     movers: moverStates(h, game.t),
     aim,
     flagAlpha: Math.max(0, Math.min(1, (Math.hypot(b.x - cx, b.y - cy) - 40) / 60)),
   };
+}
+
+// Ghost copies behind a fast ball: positions from a few steps ago.
+function trailPoints() {
+  const tr = game.trail, out = [];
+  if (game.state !== 'rolling' || tr.length < 10) return out;
+  const v = tr[tr.length - 1].v;
+  const k = Math.max(0, Math.min(1, (v - 380) / 600));
+  if (!k) return out;
+  [3, 6, 9].forEach((back, i) => {
+    const p = tr[tr.length - 1 - back];
+    out.push({ x: p.x, y: p.y, a: k * [0.35, 0.2, 0.1][i], s: [0.9, 0.8, 0.7][i] });
+  });
+  return out;
+}
+
+function squashNow() {
+  const s = game.squash;
+  if (!s) return { squash: 0, squashAng: 0 };
+  return { squash: s.amt * Math.max(0, 1 - (game.t - s.t) / 0.12), squashAng: s.ang };
 }
 
 function staticLayer(v) {
@@ -817,6 +897,30 @@ function staticLayer(v) {
     layerKey = key;
   }
   return layer;
+}
+
+// A little "!" pops over a sheep when the ball bumps it (drawn upright on screen).
+function drawBubbles(v) {
+  const now = game.t;
+  for (const [i, t0] of Object.entries(game.bubbles)) {
+    const age = now - t0, m = v.movers[i];
+    if (age > 0.8 || !m) continue;
+    const p = toScreen(m.x, m.y);
+    const pop = Math.min(1, age / 0.12), fade = 1 - Math.max(0, (age - 0.55) / 0.25);
+    const sz = (16 + 6 * Math.sin(Math.min(1, age / 0.2) * Math.PI)) * pop;
+    ctx.save();
+    ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+    ctx.globalAlpha = fade;
+    const x = p.x, y = p.y - (m.m.r + 14) * view.scale - sz;
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.roundRect(x - sz * 0.55, y - sz * 0.6, sz * 1.1, sz * 1.2, sz * 0.35); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(x - 4, y + sz * 0.55); ctx.lineTo(x, y + sz * 0.95); ctx.lineTo(x + 4, y + sz * 0.55); ctx.fill();
+    ctx.fillStyle = '#c8322d';
+    ctx.font = `800 ${Math.round(sz)}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('!', x, y + sz * 0.38);
+    ctx.restore();
+  }
 }
 
 function render() {
@@ -835,6 +939,7 @@ function render() {
   worldTransform();
   t.drawDynamic(ctx, v);
   drawParticles();
+  drawBubbles(v);
 
   const { aim, ball: b } = v;
   if (aim) {
@@ -897,4 +1002,4 @@ showTitle();
 requestAnimationFrame(frame);
 
 // Handy for debugging from the console and for automated tests.
-window.miniGolf = { game, COURSES, shoot, step, render, startCourse, startHole, save, view, toWorld };
+window.miniGolf = { game, COURSES, shoot, step, render, updateParticles, startCourse, startHole, save, view, toWorld };
