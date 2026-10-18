@@ -3,7 +3,7 @@
 const STEP = 1 / 120;            // fixed physics timestep
 const MAX_DRAG_PX = 140;         // finger/mouse travel (CSS px) for full power
 const MAX_STROKES = 8;           // pick up after this many
-const MIN_BALL_PX = 4.5;         // never draw the ball smaller than this radius on screen
+const MIN_BALL_PX = 5.5;         // never draw the ball smaller than this radius on screen
 const HOLED_PAUSE = 0.9;         // seconds of celebration before the hole card
 const SPLASH_TIME = 0.6;         // seconds the splash plays before the ball returns
 
@@ -16,10 +16,16 @@ const SAVE_KEY = 'minigolf.v1';
 function loadSave() {
   let data = {};
   try { data = JSON.parse(localStorage.getItem(SAVE_KEY)) || {}; } catch (e) { /* private mode etc. */ }
+  if (!data || typeof data !== 'object') data = {};
+  const strings = v => (Array.isArray(v) ? v.filter(s => typeof s === 'string') : []);
+  const best = {};
+  if (data.best && typeof data.best === 'object') {
+    for (const [k, v] of Object.entries(data.best)) if (Number.isFinite(v)) best[k] = v;
+  }
   return {
-    unlocked: data.unlocked || [],
-    best: data.best || {},
-    tips: data.tips || [],
+    unlocked: strings(data.unlocked),
+    best,
+    tips: strings(data.tips),
     sound: data.sound !== false,
   };
 }
@@ -50,6 +56,7 @@ const game = {
   timer: 0,                      // time spent in sinking / holed / splashing
   sinkFrom: null,
   drag: null,
+  kbAim: null,                   // keyboard aiming: { angle, power }
 };
 
 const course = () => COURSES[game.courseIndex];
@@ -81,15 +88,17 @@ function startHole(index) {
   game.paused = false;
   game.stillTime = 0;
   game.drag = null;
+  game.kbAim = null;
   particles.length = 0;
   document.body.classList.remove('menu');
   hideOverlay();
   updateHud();
   resize();
 
+  // Tips first, so they land before the first shot.
   clearToasts();
-  if (!view.signShown) toast(`Hole ${index + 1} · ${hole().name} · Par ${hole().par}`);
-  for (const tip of newTips()) toast(tip, 3200);
+  for (const tip of newTips()) toast(tip, 2600);
+  if (!view.signShown) toast(`Hole ${index + 1} · ${hole().name} · Par ${hole().par}`, 1600);
 }
 
 // First time a player meets each kind of hazard or obstacle, explain it.
@@ -169,10 +178,16 @@ function step(dt) {
   for (let i = 0; i < n; i++) {
     b.x += (b.vx * dt) / n;
     b.y += (b.vy * dt) / n;
-    impact = Math.max(impact, collideMovers(b, movers), collideSegments(b, segs), collideSegments(b, segs));
+    const bump = collideMovers(b, movers);
+    if (bump > 60) sfx.bump(bump);
+    impact = Math.max(impact, collideSegments(b, segs), collideSegments(b, segs));
     if (game.state === 'rolling' && checkCup(dt / n)) return;
   }
   if (impact > 60) sfx.wall(impact);
+  const nowZone = zoneAt(h, b.x, b.y);
+  const nowType = nowZone ? nowZone.type : 'grass';
+  if (nowType === 'sand' && game.zoneType !== 'sand' && game.state === 'rolling') sfx.sand();
+  game.zoneType = nowType;
   speed = Math.hypot(b.vx, b.vy);
 
   if (game.state === 'aim') {
@@ -183,6 +198,14 @@ function step(dt) {
     } else {
       b.vx = b.vy = 0;
     }
+    return;
+  }
+
+  // Safety net: if the ball ever ends up outside the course, put it back.
+  if (!insidePolygon(h.shape, b.x, b.y)) {
+    Object.assign(b, { x: game.lastRest.x, y: game.lastRest.y, vx: 0, vy: 0 });
+    game.state = 'aim';
+    toast('Out of bounds: back you go', 1800, true);
     return;
   }
 
@@ -239,14 +262,17 @@ function shoot(dirX, dirY, power) {
   if (game.state !== 'aim' || game.paused) return;
   const len = Math.hypot(dirX, dirY) || 1;
   const p = Math.max(0, Math.min(1, power));
-  game.ball.vx = (dirX / len) * p * MAX_SPEED;
-  game.ball.vy = (dirY / len) * p * MAX_SPEED;
+  const speed = Math.pow(p, POWER_CURVE) * MAX_SPEED;
+  game.ball.vx = (dirX / len) * speed;
+  game.ball.vy = (dirY / len) * speed;
   game.lastRest = { x: game.ball.x, y: game.ball.y };
   game.strokes++;
   game.state = 'rolling';
   game.stillTime = 0;
+  game.kbAim = null;
   sfx.hit(p);
   updateHud();
+  if (game.strokes === MAX_STROKES - 2) toast(`2 strokes left: the ball is picked up after ${MAX_STROKES}`, 2400, true);
 }
 
 // ---- Particles ------------------------------------------------------------
@@ -330,11 +356,14 @@ const cap = s => s[0].toUpperCase() + s.slice(1);
 function finishHole(pickedUp) {
   game.state = 'done';
   game.drag = null;
+  game.kbAim = null;
+  clearToasts();
   game.scores[game.holeIndex] = game.strokes;
   updateHud();
   const c = course();
   const last = game.holeIndex === c.holes.length - 1;
   const title = pickedUp ? 'Picked up' : scoreName(game.strokes, hole().par);
+  if (pickedUp) sfx.pickup();
   const word = game.strokes === 1 ? 'stroke' : 'strokes';
   const playedPar = c.holes.slice(0, game.holeIndex + 1).reduce((a, h) => a + h.par, 0);
   const holesWord = game.holeIndex === 0 ? '1 hole' : `${game.holeIndex + 1} holes`;
@@ -347,11 +376,12 @@ function finishHole(pickedUp) {
 }
 
 function finishCourse() {
+  clearToasts();
   const c = course();
   const score = total();
   const prevBest = save.best[c.id];
   const newBest = prevBest === undefined || score < prevBest;
-  if (newBest) save.best[c.id] = score;
+  if (newBest) { save.best[c.id] = score; sfx.fanfare(); }
   const unlocks = COURSES.filter(o => o.bonus && !save.unlocked.includes(o.id) && o.id !== c.id);
   unlocks.forEach(o => save.unlocked.push(o.id));
   writeSave();
@@ -411,7 +441,7 @@ function showTitle() {
     `<h1 class="logo">Mini Golf</h1>` +
     `<p>Pick a course</p>` +
     `<div class="courses">${cards}</div>` +
-    `<label class="toggle"><input type="checkbox" data-action="sound"${save.sound ? ' checked' : ''}> Sound</label>`
+    soundToggle()
   );
 }
 
@@ -425,8 +455,22 @@ function showMenu() {
     scorecardTable(game.scores) +
     `<div class="actions"><button data-action="resume">Resume</button>` +
     `<button data-action="restart" class="secondary">Restart hole</button>` +
-    `<button data-action="courses" class="secondary">Courses</button></div>`
+    `<button data-action="leave" class="secondary">Courses</button></div>` +
+    soundToggle()
   );
+}
+
+function confirmLeave() {
+  showOverlay(
+    `<h2>Leave this round?</h2>` +
+    `<p>Your scores for this round won't be saved.</p>` +
+    `<div class="actions"><button data-action="menu">Keep playing</button>` +
+    `<button data-action="courses" class="secondary">Leave round</button></div>`
+  );
+}
+
+function soundToggle() {
+  return `<label class="toggle"><input type="checkbox" data-action="sound"${save.sound ? ' checked' : ''}> Sound</label>`;
 }
 
 function canRestart() {
@@ -438,12 +482,16 @@ const $ = id => document.getElementById(id);
 function showOverlay(html) {
   $('card').innerHTML = html;
   $('overlay').classList.add('show');
+  $('wrap').inert = true;   // keep focus and screen readers in the dialog
+  document.body.classList.add('dialog');
   const first = $('card').querySelector('button:not([disabled])');
   if (first) first.focus({ preventScroll: true });
 }
 
 function hideOverlay() {
   $('overlay').classList.remove('show');
+  $('wrap').inert = false;
+  document.body.classList.remove('dialog');
 }
 
 $('card').addEventListener('click', e => {
@@ -456,6 +504,8 @@ $('card').addEventListener('click', e => {
     case 'finish': finishCourse(); break;
     case 'replay': startCourse(game.courseIndex); break;
     case 'courses': showTitle(); break;
+    case 'leave': confirmLeave(); break;
+    case 'menu': game.paused = false; showMenu(); break;
     case 'resume': game.paused = false; hideOverlay(); break;
     case 'restart': startHole(game.holeIndex); break;
   }
@@ -478,6 +528,8 @@ function updateHud() {
   $('hud-par').textContent = hole().par;
   $('hud-strokes').textContent = game.strokes;
   $('hud-total').textContent = total() + (game.state === 'done' ? 0 : game.strokes);
+  canvas.setAttribute('aria-label', `${course().name}, hole ${game.holeIndex + 1} of ${course().holes.length}: ${hole().name}, par ${hole().par}. ` +
+    `Strokes ${game.strokes}. Drag back and release to putt, or use the arrow keys and Space.`);
 }
 
 // Toasts queue up and sit at the top of the course.
@@ -528,7 +580,8 @@ function ensureAudio() {
   if (!audio) {
     try { audio = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
   }
-  if (audio.state === 'suspended') audio.resume();
+  // iOS can leave the context 'suspended' or 'interrupted' (e.g. after a call).
+  if (audio.state !== 'running') audio.resume().catch(() => {});
 }
 
 function tone(freq, dur, type, vol, delay = 0) {
@@ -554,6 +607,15 @@ const sfx = {
   },
   cup: () => { tone(660, 0.12, 'sine', 0.2); tone(990, 0.25, 'sine', 0.2, 0.1); tone(1320, 0.3, 'sine', 0.12, 0.22); },
   splash: () => { tone(140, 0.35, 'sawtooth', 0.08); tone(90, 0.4, 'sine', 0.15); },
+  bump: impact => {
+    if (game.t - lastWallSound < 0.12) return;
+    lastWallSound = game.t;
+    if (course().theme === 'tiny') { tone(520, 0.09, 'sawtooth', 0.06); tone(470, 0.14, 'sawtooth', 0.05, 0.08); }   // baa
+    else tone(110, 0.08, 'triangle', 0.25 * Math.min(1, impact / 400));                                                 // thud
+  },
+  sand: () => tone(200, 0.12, 'triangle', 0.08),
+  pickup: () => { tone(330, 0.15, 'sine', 0.15); tone(247, 0.3, 'sine', 0.15, 0.14); },
+  fanfare: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.22, 'triangle', 0.15, 0.4 + i * 0.12)),
 };
 
 // ---- View: scaling and portrait rotation ----------------------------------
@@ -573,7 +635,7 @@ function resize() {
   const gap = parseFloat(ws.rowGap) || 10;
   const padX = parseFloat(ws.paddingLeft) + parseFloat(ws.paddingRight);
   const padY = parseFloat(ws.paddingTop) + parseFloat(ws.paddingBottom);
-  let availW = innerWidth - padX, availH = innerHeight - padY;
+  let availW = wrap.clientWidth - padX, availH = wrap.clientHeight - padY;   // inside the safe area
   const hintH = hint.offsetParent ? hint.offsetHeight + gap : 0;
   if (ws.flexDirection === 'row') {
     availW -= hud.offsetWidth + gap;
@@ -595,13 +657,17 @@ function resize() {
   canvas.style.height = `${cssH}px`;
   canvas.width = Math.round(cssW * view.dpr);
   canvas.height = Math.round(cssH * view.dpr);
+  layerKey = '';             // fonts or size changed: redraw the static layer
+  const th = theme();
+  canvas.style.background = th.background ? th.background(view.rotated) : '';
+  pausedFrameDrawn = false;
   if (toastTimer) positionToast();
 }
 
-function worldTransform() {
+function worldTransform(c = ctx) {
   const s = view.scale * view.dpr;
-  if (view.rotated) ctx.setTransform(0, -s, s, 0, 0, W * s);
-  else ctx.setTransform(s, 0, 0, s, 0, 0);
+  if (view.rotated) c.setTransform(0, -s, s, 0, 0, W * s);
+  else c.setTransform(s, 0, 0, s, 0, 0);
 }
 
 function toWorld(clientX, clientY) {
@@ -619,11 +685,19 @@ function toScreen(x, y) {
 }
 
 window.addEventListener('resize', resize);
-if (document.fonts && document.fonts.ready) document.fonts.ready.then(resize);
+// Canvas text only triggers font downloads when first drawn, so ask for the
+// theme fonts up front and redraw the cached layer whenever one arrives.
+if (document.fonts) {
+  document.fonts.addEventListener?.('loadingdone', () => { layerKey = ''; pausedFrameDrawn = false; });
+  Promise.all(['700 20px Fredoka', '700 20px Caveat'].map(f => document.fonts.load(f).catch(() => {})))
+    .then(() => { layerKey = ''; pausedFrameDrawn = false; resize(); });
+}
 
 // ---- Input ----------------------------------------------------------------
 // Power comes from how far the pointer travels on screen (CSS px), so it feels
-// the same on a phone and a monitor; direction comes from the world.
+// the same on a phone and a monitor; direction comes from the world. Only the
+// pointer that started the drag counts, so a second finger or a palm can't
+// fire a shot.
 
 function dragShot() {
   const d = game.drag;
@@ -634,40 +708,76 @@ function dragShot() {
   return { dx, dy, len, power: Math.min(px, MAX_DRAG_PX) / MAX_DRAG_PX };
 }
 
+const ownsPointer = e => game.drag && e.pointerId === game.drag.id;
+
 canvas.addEventListener('pointerdown', e => {
   ensureAudio();
+  if (game.drag || !e.isPrimary || e.button > 0) return;
   if (game.state !== 'aim' || game.paused) return;
-  canvas.setPointerCapture(e.pointerId);
-  game.drag = { scx: e.clientX, scy: e.clientY, cx: e.clientX, cy: e.clientY };
+  try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* not fatal */ }
+  game.kbAim = null;
+  game.drag = { id: e.pointerId, scx: e.clientX, scy: e.clientY, cx: e.clientX, cy: e.clientY };
 });
 
 canvas.addEventListener('pointermove', e => {
-  if (!game.drag) return;
+  if (!ownsPointer(e)) return;
   game.drag.cx = e.clientX;
   game.drag.cy = e.clientY;
 });
 
-canvas.addEventListener('pointerup', () => {
-  if (!game.drag) return;
+canvas.addEventListener('pointerup', e => {
+  if (!ownsPointer(e)) return;
+  ensureAudio();
   const { dx, dy, power } = dragShot();
   game.drag = null;
   if (power > 0.04) shoot(dx, dy, power);
 });
 
-canvas.addEventListener('pointercancel', () => { game.drag = null; });
+for (const type of ['pointercancel', 'lostpointercapture']) {
+  canvas.addEventListener(type, e => { if (ownsPointer(e)) game.drag = null; });
+}
+
+// Keyboard putting: arrows aim (Shift for fine steps), up/down set power,
+// Space or Enter shoots.
+const AIM_KEYS = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' ', 'Enter'];
 
 window.addEventListener('keydown', e => {
   if (e.key === 'Escape') {
     if (game.drag) game.drag = null;
+    else if (game.kbAim) game.kbAim = null;
     else if (game.paused) { game.paused = false; hideOverlay(); }
     else showMenu();
+    return;
   }
-  if ((e.key === 'r' || e.key === 'R') && canRestart()) startHole(game.holeIndex);
+  if ($('overlay').classList.contains('show')) return;   // let buttons have the keys
+  if ((e.key === 'r' || e.key === 'R') && canRestart()) { startHole(game.holeIndex); return; }
+  if (!AIM_KEYS.includes(e.key) || game.state !== 'aim' || game.paused || game.drag) return;
+  e.preventDefault();
+  ensureAudio();
+  const b = game.ball;
+  if (!game.kbAim) {
+    const [cx, cy] = hole().cup;
+    game.kbAim = { angle: Math.atan2(cy - b.y, cx - b.x), power: 0.4 };
+    if (e.key === ' ' || e.key === 'Enter') return;      // first press just shows the aim
+  }
+  const turn = ((e.shiftKey ? 1 : 4) * Math.PI) / 180;
+  const k = game.kbAim;
+  if (e.key === 'ArrowLeft') k.angle -= turn;
+  if (e.key === 'ArrowRight') k.angle += turn;
+  if (e.key === 'ArrowUp') k.power = Math.min(1, k.power + 0.05);
+  if (e.key === 'ArrowDown') k.power = Math.max(0.05, k.power - 0.05);
+  if (e.key === ' ' || e.key === 'Enter') shoot(Math.cos(k.angle), Math.sin(k.angle), k.power);
 });
 
 // ---- Rendering ------------------------------------------------------------
+// Everything that never moves during a hole is drawn once into an offscreen
+// layer; each frame copies it and draws only the moving parts on top.
 
-function render() {
+const layer = document.createElement('canvas');
+const layerCtx = layer.getContext('2d');
+let layerKey = '';
+
+function viewState() {
   const h = hole();
   const b = game.ball;
   const [cx, cy] = h.cup;
@@ -675,12 +785,12 @@ function render() {
   if (game.drag && game.state === 'aim') {
     const { dx, dy, len, power } = dragShot();
     if (len > 0.5) aim = { ux: dx / len, uy: dy / len, power };
+  } else if (game.kbAim && game.state === 'aim') {
+    aim = { ux: Math.cos(game.kbAim.angle), uy: Math.sin(game.kbAim.angle), power: game.kbAim.power };
   }
   let r = Math.max(BALL_R, MIN_BALL_PX / view.scale);
   if (game.state === 'sinking') r *= 1 - 0.6 * game.timer;
-
-  worldTransform();
-  theme().draw(ctx, {
+  return {
     hole: h,
     holeIndex: game.holeIndex,
     t: reducedMotion.matches ? 0 : game.t,   // decoration only; obstacles come pre-placed below
@@ -691,10 +801,41 @@ function render() {
     movers: moverStates(h, game.t),
     aim,
     flagAlpha: Math.max(0, Math.min(1, (Math.hypot(b.x - cx, b.y - cy) - 40) / 60)),
-  });
+  };
+}
+
+function staticLayer(v) {
+  const key = [game.courseIndex, game.holeIndex, canvas.width, canvas.height, view.rotated, view.signShown].join(':');
+  if (key !== layerKey) {
+    layer.width = canvas.width;
+    layer.height = canvas.height;
+    worldTransform(layerCtx);
+    theme().drawStatic(layerCtx, v);
+    layerKey = key;
+  }
+  return layer;
+}
+
+function render() {
+  const v = viewState();
+  const t = theme();
+  if (t.background) {
+    // The static layer has see-through sky, so clear and let the CSS gradient show.
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+  }
+  worldTransform();
+  if (t.drawBackdrop) t.drawBackdrop(ctx, v);
+  const img = staticLayer(v);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.drawImage(img, 0, 0);
+  worldTransform();
+  t.drawDynamic(ctx, v);
   drawParticles();
 
+  const { aim, ball: b } = v;
   if (aim) {
+    const r = b.r;
     // Power ring around the ball (world space)...
     const hue = 120 - aim.power * 120;
     const color = `hsl(${hue}, 85%, 50%)`;
@@ -728,6 +869,7 @@ function render() {
 
 let last = performance.now();
 let acc = 0;
+let pausedFrameDrawn = false;
 function frame(now) {
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
@@ -738,7 +880,13 @@ function frame(now) {
   }
   if (game.state === 'menu') game.t += dt;   // keep the title backdrop alive
   updateParticles(dt);
-  render();
+  // While paused behind a menu nothing moves, so draw one frame and idle.
+  if (game.paused && !particles.length) {
+    if (!pausedFrameDrawn) { render(); pausedFrameDrawn = true; }
+  } else {
+    pausedFrameDrawn = false;
+    render();
+  }
   requestAnimationFrame(frame);
 }
 
@@ -746,4 +894,4 @@ showTitle();
 requestAnimationFrame(frame);
 
 // Handy for debugging from the console and for automated tests.
-window.miniGolf = { game, COURSES, shoot, step, startCourse, startHole, save, view, toWorld };
+window.miniGolf = { game, COURSES, shoot, step, render, startCourse, startHole, save, view, toWorld };

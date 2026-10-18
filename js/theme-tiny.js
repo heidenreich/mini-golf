@@ -3,8 +3,6 @@
 // Tiny World: each hole is a floating island with hedges, trees, a duck pond
 // and the odd sheep.
 
-const THEMES = {};
-
 (() => {
   const ROUND = '"Fredoka", system-ui, sans-serif';
 
@@ -43,9 +41,12 @@ const THEMES = {};
     ctx.restore();
   }
 
-  function drawZone(ctx, z, t) {
+  // Zones draw in two passes: 'static' parts go into the cached layer once per
+  // hole, 'dynamic' parts (ripples, ducks, sparkles, moving arrows) every frame.
+  function drawZone(ctx, z, t, pass) {
     const cx = z.x + z.w / 2, cy = z.y + z.h / 2;
     if (z.type === 'sand') {
+      if (pass !== 'static') return;
       blob(ctx, cx, cy, z.w / 2, z.h / 2, z.x * 0.01, 0.06);
       ctx.fillStyle = '#efdca4';
       ctx.fill();
@@ -58,12 +59,23 @@ const THEMES = {};
       }
       ctx.restore();
     } else if (z.type === 'water') {
-      blob(ctx, cx, cy, z.w / 2 + 4, z.h / 2 + 4, z.y * 0.01, 0.05);
-      ctx.fillStyle = '#c9e7a8';
-      ctx.fill();
+      if (pass === 'static') {
+        blob(ctx, cx, cy, z.w / 2 + 4, z.h / 2 + 4, z.y * 0.01, 0.05);
+        ctx.fillStyle = '#c9e7a8';
+        ctx.fill();
+        blob(ctx, cx, cy, z.w / 2 - 1, z.h / 2 - 1, z.y * 0.01, 0.05);
+        ctx.fillStyle = '#4fa3d9';
+        ctx.fill();
+        ctx.fillStyle = '#4c9a3c';
+        ctx.beginPath();
+        ctx.arc(cx + z.w * 0.2, cy - z.h * 0.25, 8, 0.4, Math.PI * 2 - 0.2);
+        ctx.lineTo(cx + z.w * 0.2, cy - z.h * 0.25);
+        ctx.fill();
+        return;
+      }
+      ctx.save();
       blob(ctx, cx, cy, z.w / 2 - 1, z.h / 2 - 1, z.y * 0.01, 0.05);
-      ctx.fillStyle = '#4fa3d9';
-      ctx.fill();
+      ctx.clip();
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
       ctx.lineWidth = 1.5;
       for (let i = 0; i < 3; i++) {
@@ -74,47 +86,52 @@ const THEMES = {};
         ctx.stroke();
       }
       ctx.globalAlpha = 1;
-      ctx.fillStyle = '#4c9a3c';
-      ctx.beginPath();
-      ctx.arc(cx + z.w * 0.2, cy - z.h * 0.25, 8, 0.4, Math.PI * 2 - 0.2);
-      ctx.lineTo(cx + z.w * 0.2, cy - z.h * 0.25);
-      ctx.fill();
       for (let i = 0; i < 2; i++) {
         const a = t * 0.5 + i * Math.PI;
         duck(ctx, cx + Math.cos(a) * z.w * 0.25, cy + Math.sin(a) * z.h * 0.25, a + Math.PI / 2);
       }
+      ctx.restore();
     } else if (z.type === 'ice') {
-      ctx.fillStyle = '#d4f1ff';
       ctx.save();
-      ctx.beginPath(); ctx.roundRect(z.x, z.y, z.w, z.h, 16); ctx.fill();
-      ctx.clip();
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
-      ctx.lineWidth = 2;
-      for (let i = -z.h; i < z.w; i += 34) {
-        ctx.beginPath();
-        ctx.moveTo(z.x + i, z.y + z.h);
-        ctx.lineTo(z.x + i + z.h * 0.5, z.y);
-        ctx.stroke();
+      ctx.beginPath(); ctx.roundRect(z.x, z.y, z.w, z.h, 16);
+      if (pass === 'static') {
+        ctx.fillStyle = '#d4f1ff';
+        ctx.fill();
+        ctx.clip();
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+        ctx.lineWidth = 2;
+        for (let i = -z.h; i < z.w; i += 34) {
+          ctx.beginPath();
+          ctx.moveTo(z.x + i, z.y + z.h);
+          ctx.lineTo(z.x + i + z.h * 0.5, z.y);
+          ctx.stroke();
+        }
+      } else {
+        ctx.clip();
+        ctx.fillStyle = '#ffffff';
+        for (let i = 0; i < 6; i++) {
+          const tw = 0.5 + 0.5 * Math.sin(t * 3 + i * 2.1);
+          const sx = z.x + 15 + rand(i + z.x) * (z.w - 30), sy = z.y + 15 + rand(i + z.y) * (z.h - 30);
+          ctx.globalAlpha = tw;
+          ctx.fillRect(sx - 4, sy - 0.75, 8, 1.5);
+          ctx.fillRect(sx - 0.75, sy - 4, 1.5, 8);
+        }
       }
-      ctx.fillStyle = '#ffffff';
-      for (let i = 0; i < 6; i++) {
-        const tw = 0.5 + 0.5 * Math.sin(t * 3 + i * 2.1);
-        const sx = z.x + 15 + rand(i + z.x) * (z.w - 30), sy = z.y + 15 + rand(i + z.y) * (z.h - 30);
-        ctx.globalAlpha = tw;
-        ctx.fillRect(sx - 4, sy - 0.75, 8, 1.5);
-        ctx.fillRect(sx - 0.75, sy - 4, 1.5, 8);
-      }
-      ctx.globalAlpha = 1;
       ctx.restore();
     } else if (z.type === 'slope') {
-      ctx.fillStyle = 'rgba(40, 110, 40, 0.28)';
-      ctx.fillRect(z.x, z.y, z.w, z.h);
+      if (pass === 'static') {
+        ctx.fillStyle = 'rgba(40, 110, 40, 0.28)';
+        ctx.fillRect(z.x, z.y, z.w, z.h);
+        return;
+      }
+      // Keep the moving arrows clear of the hedges.
+      const m = WALL_HALF + 4;
       ctx.save();
-      ctx.beginPath(); ctx.rect(z.x, z.y, z.w, z.h); ctx.clip();
+      ctx.beginPath(); ctx.rect(z.x + m, z.y + m, z.w - 2 * m, z.h - 2 * m); ctx.clip();
       const a = Math.atan2(z.ay, z.ax);
       const gap = 40, offset = (t * 25) % gap;
       const reach = Math.hypot(z.w, z.h) / 2 + gap;
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
       ctx.lineWidth = 3;
       ctx.lineCap = 'round';
       for (let d = -reach + offset; d < reach; d += gap) {
@@ -157,7 +174,7 @@ const THEMES = {};
     ctx.fillRect(x - 4, y + 12, 8, 38);
     ctx.font = `700 20px ${ROUND}`;
     const w = Math.max(150, ctx.measureText(text).width + 30);
-    ctx.fillStyle = '#b67b46';
+    ctx.fillStyle = '#8d5730';
     ctx.beginPath(); ctx.roundRect(x - w / 2, y - 23, w, 44, 6); ctx.fill();
     ctx.fillStyle = 'rgba(90, 50, 20, 0.35)';
     ctx.fillRect(x - w / 2, y - 1, w, 2);
@@ -167,18 +184,12 @@ const THEMES = {};
     ctx.textAlign = 'left';
   }
 
-  function draw(ctx, v) {
-    const { hole, t } = v;
+  function drawBackdrop(ctx, v) {
+    const t = v.t;
     const seed = v.holeIndex * 31 + 7;
     dropShadow(ctx, false);
-    ctx.lineJoin = 'round';
 
-    // Sky and drifting clouds
-    const sky = ctx.createLinearGradient(0, 0, 0, H);
-    sky.addColorStop(0, '#7cc6f2');
-    sky.addColorStop(1, '#d6f0ff');
-    ctx.fillStyle = sky;
-    ctx.fillRect(0, 0, W, H);
+    // Drifting clouds (the sky itself is the canvas's CSS background)
     ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
     for (let i = 0; i < 5; i++) {
       const speed = 8 + rand(seed + i) * 10;
@@ -186,6 +197,13 @@ const THEMES = {};
       blob(ctx, x, 30 + rand(seed + i + 0.6) * 540, 60 + rand(i) * 30, 20, i, 0.2);
       ctx.fill();
     }
+  }
+
+  function drawStatic(ctx, v) {
+    const { hole } = v;
+    const seed = v.holeIndex * 31 + 7;
+    dropShadow(ctx, false);
+    ctx.lineJoin = 'round';
 
     // Island: dirt underside, then the grass top
     tracePoly(ctx, hole.shape, 0, 30);
@@ -225,7 +243,7 @@ const THEMES = {};
     for (let x = 0; x < W; x += 40) {
       for (let y = 0; y < H; y += 40) if (((x + y) / 40) % 2 === 0) ctx.fillRect(x, y, 40, 40);
     }
-    (hole.zones || []).forEach(z => drawZone(ctx, z, t));
+    (hole.zones || []).forEach(z => drawZone(ctx, z, 0, 'static'));
     ctx.restore();
 
     // Tee box
@@ -245,6 +263,14 @@ const THEMES = {};
     circle(ctx, cx, cy, CUP_R + 2); ctx.fill();
     ctx.fillStyle = '#2a3b20';
     circle(ctx, cx, cy, CUP_R); ctx.fill();
+  }
+
+  function drawDynamic(ctx, v) {
+    const { hole, t } = v;
+    const [cx, cy] = hole.cup;
+    ctx.lineJoin = 'round';
+    (hole.zones || []).forEach(z => drawZone(ctx, z, t, 'dynamic'));
+
     if (v.flagAlpha > 0) {
       ctx.save();
       ctx.globalAlpha = v.flagAlpha;
@@ -340,7 +366,11 @@ const THEMES = {};
   }
 
   THEMES.tiny = {
-    draw,
+    // World top is screen left when the course is turned for portrait.
+    background: rotated => `linear-gradient(${rotated ? 'to right' : 'to bottom'}, #7cc6f2, #d6f0ff)`,
+    drawBackdrop,
+    drawStatic,
+    drawDynamic,
     confetti: ['#ff8fb1', '#fff27a', '#ffffff', '#8fd16f'],
     splash: ['#4fa3d9', '#bfe3f7', '#ffffff'],
     waterToast: 'Splash! +1 stroke',

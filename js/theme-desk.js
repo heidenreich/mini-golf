@@ -8,21 +8,21 @@
 
   function drawRuler(ctx, len) {
     ctx.fillStyle = '#f3d77a';
-    ctx.fillRect(-8, -9, len + 16, 18);
+    ctx.fillRect(-8, -7, len + 16, 14);
     dropShadow(ctx, false);
     ctx.strokeStyle = '#a8842f';
     ctx.lineWidth = 1;
-    ctx.strokeRect(-8, -9, len + 16, 18);
+    ctx.strokeRect(-8, -7, len + 16, 14);
     ctx.strokeStyle = '#6b5418';
     ctx.fillStyle = '#6b5418';
     ctx.font = '7px system-ui, sans-serif';
     for (let x = 0; x <= len; x += 10) {
       const long = x % 50 === 0;
       ctx.beginPath();
-      ctx.moveTo(x, -9);
-      ctx.lineTo(x, -9 + (long ? 8 : 4));
+      ctx.moveTo(x, -7);
+      ctx.lineTo(x, -7 + (long ? 6 : 3));
       ctx.stroke();
-      if (long && x > 0 && x < len) ctx.fillText(String(x / 10), x - 3, 6);
+      if (long && x > 0 && x < len) ctx.fillText(String(x / 10), x - 3, 5.5);
     }
   }
 
@@ -56,14 +56,14 @@
   function drawEraser(ctx, len) {
     ctx.fillStyle = '#f49ac1';
     ctx.beginPath();
-    ctx.roundRect(-6, -11, len + 12, 22, 5);
+    ctx.roundRect(-6, -8, len + 12, 16, 4);
     ctx.fill();
     dropShadow(ctx, false);
     ctx.fillStyle = '#ffffff';
-    ctx.fillRect(len * 0.3, -11, len * 0.45, 22);
+    ctx.fillRect(len * 0.3, -8, len * 0.45, 16);
     ctx.fillStyle = '#3b6fd8';
-    ctx.font = `700 13px ${HAND}`;
-    ctx.fillText('ERASE', len * 0.33, 4);
+    ctx.font = `700 11px ${HAND}`;
+    ctx.fillText('ERASE', len * 0.33, 3.5);
   }
 
   function paperclip(ctx, x, y, rot) {
@@ -129,9 +129,12 @@
     ctx.restore();
   }
 
-  function drawZone(ctx, z, t) {
+  // Zones draw in two passes: 'static' parts go into the cached layer once per
+  // hole, 'dynamic' parts (the sleeve's shine, the breeze) every frame.
+  function drawZone(ctx, z, t, pass) {
     const cx = z.x + z.w / 2, cy = z.y + z.h / 2;
     if (z.type === 'sand') {
+      if (pass !== 'static') return;
       // Pile of eraser shavings: dry, crumbly, slow
       blob(ctx, cx, cy, z.w / 2, z.h / 2, z.x * 0.013, 0.07);
       ctx.fillStyle = 'rgba(244, 170, 196, 0.45)';
@@ -152,7 +155,8 @@
       ctx.restore();
     } else if (z.type === 'water') {
       // Ink blot
-      blob(ctx, cx, cy, z.w / 2, z.h / 2, z.y * 0.017, 0.07 + Math.sin(t * 2) * 0.01);
+      if (pass !== 'static') return;
+      blob(ctx, cx, cy, z.w / 2, z.h / 2, z.y * 0.017, 0.07);
       ctx.fillStyle = '#16205a';
       ctx.fill();
       blob(ctx, cx - z.w * 0.12, cy - z.h * 0.15, z.w * 0.16, z.h * 0.09, 5, 0.1);
@@ -166,11 +170,14 @@
       }
     } else if (z.type === 'ice') {
       // Slick plastic sleeve
-      ctx.fillStyle = 'rgba(170, 210, 255, 0.35)';
-      ctx.fillRect(z.x, z.y, z.w, z.h);
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(z.x + 1, z.y + 1, z.w - 2, z.h - 2);
+      if (pass === 'static') {
+        ctx.fillStyle = 'rgba(170, 210, 255, 0.35)';
+        ctx.fillRect(z.x, z.y, z.w, z.h);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+        ctx.lineWidth = 2;
+        ctx.strokeRect(z.x + 1, z.y + 1, z.w - 2, z.h - 2);
+        return;
+      }
       ctx.save();
       ctx.beginPath(); ctx.rect(z.x, z.y, z.w, z.h); ctx.clip();
       const shine = ((t * 60) % (z.h + 200)) - 100;
@@ -185,10 +192,14 @@
       ctx.restore();
     } else if (z.type === 'slope') {
       // Breeze from the desk fan
+      if (pass === 'static') {
+        ctx.fillStyle = 'rgba(200, 230, 255, 0.10)';
+        ctx.fillRect(z.x, z.y, z.w, z.h);
+        return;
+      }
+      const m = WALL_HALF + 4;   // keep streaks off the walls
       ctx.save();
-      ctx.beginPath(); ctx.rect(z.x, z.y, z.w, z.h); ctx.clip();
-      ctx.fillStyle = 'rgba(200, 230, 255, 0.10)';
-      ctx.fillRect(z.x, z.y, z.w, z.h);
+      ctx.beginPath(); ctx.rect(z.x + m, z.y + m, z.w - 2 * m, z.h - 2 * m); ctx.clip();
       const a = Math.atan2(z.ay, z.ax);
       const ux = Math.cos(a), uy = Math.sin(a);
       const reach = Math.hypot(z.w, z.h);
@@ -208,8 +219,8 @@
     }
   }
 
-  function draw(ctx, v) {
-    const { hole, t } = v;
+  function drawStatic(ctx, v) {
+    const { hole } = v;
     const seed = v.holeIndex * 17 + 3;
     dropShadow(ctx, false);
     ctx.lineJoin = 'round';
@@ -260,7 +271,7 @@
     for (let d = -H; d < W; d += 125) {
       ctx.beginPath(); ctx.moveTo(d, H); ctx.lineTo(d + H, 0); ctx.stroke();
     }
-    (hole.zones || []).forEach(z => drawZone(ctx, z, t));
+    (hole.zones || []).forEach(z => drawZone(ctx, z, 0, 'static'));
     ctx.restore();
 
     if (v.showLabel) stickyNote(ctx, hole.label[0], hole.label[1], hole, v.holeIndex);
@@ -290,15 +301,7 @@
     });
     dropShadow(ctx, false);
 
-    // A desk fan sits upwind of each breeze zone
-    for (const z of hole.zones || []) {
-      if (z.type !== 'slope') continue;
-      const a = Math.atan2(z.ay, z.ax);
-      const ext = Math.abs(Math.cos(a)) * z.w / 2 + Math.abs(Math.sin(a)) * z.h / 2;
-      deskFan(ctx, z.x + z.w / 2 - Math.cos(a) * (ext + 45), z.y + z.h / 2 - Math.sin(a) * (ext + 45), a, t);
-    }
-
-    // Coffee-mug cup with a toothpick flag
+    // Coffee-mug cup
     const [cx, cy] = hole.cup;
     dropShadow(ctx, true);
     ctx.fillStyle = '#f4f1ea';
@@ -311,6 +314,23 @@
     circle(ctx, cx, cy, 13); ctx.fill();
     ctx.fillStyle = 'rgba(255, 220, 180, 0.25)';
     ctx.beginPath(); ctx.ellipse(cx - 4, cy - 5, 5, 2.5, -0.5, 0, Math.PI * 2); ctx.fill();
+  }
+
+  function drawDynamic(ctx, v) {
+    const { hole, t } = v;
+    const [cx, cy] = hole.cup;
+    ctx.lineJoin = 'round';
+    (hole.zones || []).forEach(z => drawZone(ctx, z, t, 'dynamic'));
+
+    // A desk fan sits upwind of each breeze zone
+    for (const z of hole.zones || []) {
+      if (z.type !== 'slope') continue;
+      const a = Math.atan2(z.ay, z.ax);
+      const ext = Math.abs(Math.cos(a)) * z.w / 2 + Math.abs(Math.sin(a)) * z.h / 2;
+      deskFan(ctx, z.x + z.w / 2 - Math.cos(a) * (ext + 45), z.y + z.h / 2 - Math.sin(a) * (ext + 45), a, t);
+    }
+
+    // Toothpick flag
     if (v.flagAlpha > 0) {
       ctx.save();
       ctx.globalAlpha = v.flagAlpha;
@@ -411,7 +431,8 @@
   }
 
   THEMES.desk = {
-    draw,
+    drawStatic,
+    drawDynamic,
     confetti: ['#fde68a', '#fbcfe8', '#bae6fd', '#ffffff', '#e23b3b'],
     splash: ['#16205a', '#3346a8', '#6b7fd8'],
     waterToast: 'Inked! +1 stroke',

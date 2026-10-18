@@ -4,6 +4,29 @@
 
 const W = 900, H = 600;   // world size; the canvas scales to fit
 
+// Each theme registers itself here. A theme provides:
+//   drawBackdrop(ctx, view)  optional, drawn every frame under everything
+//   drawStatic(ctx, view)    drawn once per hole into a cached layer
+//   drawDynamic(ctx, view)   drawn every frame on top: flag, obstacles, ball, aim
+//   confetti, splash         particle colours for sinking and water
+//   waterToast               message when the ball lands in water
+//   tips                     first-encounter tip per zone type, 'spinner' and mover kind
+const THEMES = {};
+
+// Safari before 16 has no roundRect; a simple fallback keeps the game drawing.
+if (typeof CanvasRenderingContext2D !== 'undefined' && !CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r = 0) {
+    const [tl, tr, br, bl] = (Array.isArray(r) ? (r.length === 1 ? [r[0], r[0], r[0], r[0]] : r.length === 2 ? [r[0], r[1], r[0], r[1]] : r.length === 3 ? [r[0], r[1], r[2], r[1]] : r) : [r, r, r, r])
+      .map(v => Math.max(0, Math.min(Number(v) || 0, Math.abs(w) / 2, Math.abs(h) / 2)));
+    this.moveTo(x + tl, y);
+    this.arcTo(x + w, y, x + w, y + h, tr);
+    this.arcTo(x + w, y + h, x, y + h, br);
+    this.arcTo(x, y + h, x, y, bl);
+    this.arcTo(x, y, x + w, y, tl);
+    this.closePath();
+  };
+}
+
 const rand = n => {
   const s = Math.sin(n * 12.9898) * 43758.5453;
   return s - Math.floor(s);

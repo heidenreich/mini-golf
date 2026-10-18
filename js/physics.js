@@ -4,10 +4,12 @@
 
 const BALL_R = 7;
 const CUP_R = 12;
-const WALL_HALF = 4;             // collision half-thickness of every wall
+const WALL_HALF = 7;             // collision half-thickness of every wall (walls are drawn ~14px)
 const MAX_SPEED = 1300;          // px/s at full power
+const POWER_CURVE = 1.5;         // speed = MAX_SPEED * power^curve: fine control low, full banks still possible
 const CUP_CAPTURE_SPEED = 400;   // faster than this and the ball lips out
 const RESTITUTION = 0.72;        // bounciness of walls and obstacles
+const SOFT_IMPACT = 40;          // slower hits than this don't bounce (stops jitter against walls)
 
 // k = proportional drag, decel = constant rolling resistance (px/s²)
 const SURFACES = {
@@ -37,6 +39,15 @@ function zoneAt(hole, x, y) {
     if (zoneContains(zones[i], x, y)) return zones[i];
   }
   return null;
+}
+
+function insidePolygon(pts, x, y) {
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i], [xj, yj] = pts[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
 }
 
 function boundarySegments(hole) {
@@ -82,8 +93,9 @@ function bounce(b, cx, cy, nx, ny, R, svx, svy) {
   const vn = rvx * nx + rvy * ny;
   if (vn >= 0) return 0;
   const tvx = rvx - vn * nx, tvy = rvy - vn * ny;
-  b.vx = svx + tvx * 0.95 - vn * RESTITUTION * nx;
-  b.vy = svy + tvy * 0.95 - vn * RESTITUTION * ny;
+  const e = -vn < SOFT_IMPACT ? 0 : RESTITUTION;
+  b.vx = svx + tvx * 0.95 - vn * e * nx;
+  b.vy = svy + tvy * 0.95 - vn * e * ny;
   return -vn;
 }
 
