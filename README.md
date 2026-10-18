@@ -35,7 +35,7 @@ Best scores (per course layout), unlocks and which tips you've seen are saved in
 
 ## Controls
 
-- **Drag back** from anywhere on the course and release to putt. A 140px drag is full power on any screen; a ring and a percentage around the ball show the power. Power is curved, so the first half of the drag gives fine control for short putts.
+- **Drag back** from anywhere on the course and release to putt. Full power is a thumb-length pull (140px on larger screens, down to about 110px on phones, so it fits above the screen edge); you can start the drag anywhere, not just at the ball; a ring and a percentage around the ball show the power. Power is curved, so the first half of the drag gives fine control for short putts.
 - **Keyboard:** arrow keys aim (Shift for fine steps), up/down set power, Space or Enter putts.
 - **☰ / Esc** opens the menu with the scorecard, restart and course select. **↻ / R** restarts the current hole.
 - Works with mouse or touch. On a phone held upright the course turns 90° to fill the screen; held sideways, the scoreboard moves to a side rail.

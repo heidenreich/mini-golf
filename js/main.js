@@ -1,7 +1,8 @@
 'use strict';
 
 const STEP = 1 / 120;            // fixed physics timestep
-const MAX_DRAG_PX = 140;         // finger/mouse travel (CSS px) for full power
+const MAX_DRAG_PX = 140;         // finger/mouse travel (CSS px) for full power on larger screens
+const MIN_DRAG_PX = 90;          // ...shrinking on small phones, where a long pull runs into the screen edge
 const MAX_STROKES = 8;           // pick up after this many
 const MIN_BALL_PX = 5.5;         // never draw the ball smaller than this radius on screen
 const HOLED_PAUSE = 0.9;         // seconds of celebration before the hole card
@@ -832,7 +833,13 @@ function dragShot() {
   const a = toWorld(d.scx, d.scy), b = toWorld(d.cx, d.cy);
   const dx = a.x - b.x, dy = a.y - b.y;
   const len = Math.hypot(dx, dy);
-  return { dx, dy, len, power: Math.min(px, MAX_DRAG_PX) / MAX_DRAG_PX };
+  const full = fullPowerDrag();
+  return { dx, dy, len, power: Math.min(px, full) / full };
+}
+
+// Full power is a thumb-length pull: 28% of the screen's short side, 90-140px.
+function fullPowerDrag() {
+  return Math.max(MIN_DRAG_PX, Math.min(MAX_DRAG_PX, Math.min(innerWidth, innerHeight) * 0.28));
 }
 
 const ownsPointer = e => game.drag && e.pointerId === game.drag.id;
