@@ -6,7 +6,7 @@ A top-down 2D mini golf game in plain HTML canvas: no dependencies, no build ste
 
 ## Courses
 
-**Tiny World** (main course, 9 holes, par 26): floating islands with hedges, trees, ponds, ice, windmills and wandering sheep.
+**Tiny World** (main course, 9 holes, par 25): floating islands with hedges, trees, ponds, ice, windmills and wandering sheep.
 
 | # | Hole | Par | What's on it |
 |---|------|-----|--------------|
@@ -40,6 +40,8 @@ Best scores (per course layout), unlocks and which tips you've seen are saved in
 - **☰ / Esc** opens the menu with the scorecard, restart and course select. **↻ / R** restarts the current hole.
 - Works with mouse or touch. On a phone held upright the course turns 90° to fill the screen; held sideways, the scoreboard moves to a side rail.
 - The first time you meet each hazard or obstacle, a tip explains what it does.
+- The aim line follows the start of the roll, so it bends gently on hills; it stops at walls rather than predicting bounces.
+- The title screen plays a short demo on hole 1 behind the menu.
 - The ball is picked up after 8 strokes on a hole (you get a warning at 6).
 
 ## Run locally

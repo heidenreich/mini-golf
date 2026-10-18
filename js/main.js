@@ -5,6 +5,11 @@ const MAX_DRAG_PX = 140;         // finger/mouse travel (CSS px) for full power
 const MAX_STROKES = 8;           // pick up after this many
 const MIN_BALL_PX = 5.5;         // never draw the ball smaller than this radius on screen
 const HOLED_PAUSE = 0.9;         // seconds of celebration before the hole card
+const ACE_PAUSE = 1.9;           // a hole in one gets a longer moment
+const TRANSITION = 0.9;          // seconds for one hole to hand over to the next
+// The title screen's demo: two shots on hole 1, replayed exactly (the physics
+// is deterministic): a bank off the angled corner, then a putt that drops.
+const DEMO_SHOTS = [[4.4593, 0.98], [-0.8997, 0.22]];
 const SPLASH_TIME = 0.6;         // seconds the splash plays before the ball returns
 
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
@@ -66,6 +71,9 @@ const game = {
   squash: null,                  // { t, ang, amt } of the last hard hit
   bubbles: {},                   // mover index -> time it was bumped
   lastFx: 0,
+  demo: null,                    // title-screen demo: { shot, wait }
+  trans: null,                   // hole-to-hole transition: { p, kind }
+  ace: null,                     // { t } when a hole in one drops
 };
 
 const course = () => COURSES[game.courseIndex];
@@ -83,11 +91,20 @@ function startCourse(index) {
   game.courseIndex = index;
   game.holeIndex = 0;
   game.scores = [];
+  game.demo = null;
   setTheme(course().theme);
   startHole(0);
 }
 
-function startHole(index) {
+function startHole(index, opts = {}) {
+  // Moving on to the next hole: keep a picture of this one to animate away.
+  game.trans = null;
+  if (opts.transition && !reducedMotion.matches) {
+    snap.width = canvas.width;
+    snap.height = canvas.height;
+    snap.getContext('2d').drawImage(canvas, 0, 0);
+    game.trans = { p: 0, kind: theme().transition || 'rise' };
+  }
   game.holeIndex = index;
   game.strokes = 0;
   const [x, y] = hole().start;
@@ -101,6 +118,7 @@ function startHole(index) {
   game.trail = [];
   game.squash = null;
   game.bubbles = {};
+  game.ace = null;
   particles.length = 0;
   document.body.classList.remove('menu');
   hideOverlay();
@@ -137,6 +155,7 @@ function newTips() {
 function step(dt) {
   if (game.paused || game.state === 'menu') return;
   game.t += dt;
+  if (game.demo) demoStep(dt);
   const b = game.ball;
   const h = hole();
 
@@ -152,7 +171,8 @@ function step(dt) {
   }
   if (game.state === 'holed') {
     game.timer += dt;
-    if (game.timer >= HOLED_PAUSE) finishHole(false);
+    if (game.demo) return;
+    if (game.timer >= (game.ace ? ACE_PAUSE : HOLED_PAUSE)) finishHole(false);
     return;
   }
   if (game.state === 'splashing') {
@@ -271,6 +291,11 @@ function checkCup(dt) {
     b.vx = b.vy = 0;
     sfx.cup();
     burst(cx, cy);
+    if (game.strokes === 1 && !game.demo) {
+      game.ace = { t: game.t };
+      burst(cx, cy);
+      sfx.fanfare();
+    }
     return true;
   }
   // Too fast: the lip curls the ball a little but it rolls on.
@@ -279,6 +304,40 @@ function checkCup(dt) {
     b.vy += (dy / d) * 1800 * dt;
   }
   return false;
+}
+
+// Title demo: aim for a moment (the line and ring grow), take the next shot,
+// and start over from the tee a little after the ball drops.
+function demoStep(dt) {
+  const d = game.demo;
+  if (game.state === 'holed') {
+    if (game.timer > 1.6) demoReset();
+    return;
+  }
+  if (game.state !== 'aim') return;
+  d.wait += dt;
+  if (d.wait >= 1.5) {
+    const [a, p] = DEMO_SHOTS[d.shot % DEMO_SHOTS.length];
+    d.shot++;
+    d.wait = 0;
+    shoot(Math.cos(a), Math.sin(a), p);
+  }
+}
+
+function demoReset() {
+  const [x, y] = hole().start;
+  Object.assign(game.ball, { x, y, vx: 0, vy: 0 });
+  game.state = 'aim';
+  game.strokes = 0;
+  game.trail = [];
+  game.demo = { shot: 0, wait: 0 };
+}
+
+function demoAim() {
+  const d = game.demo;
+  if (!d || game.state !== 'aim' || d.wait < 0.5) return null;
+  const [a, p] = DEMO_SHOTS[d.shot % DEMO_SHOTS.length];
+  return { ux: Math.cos(a), uy: Math.sin(a), power: p * Math.min(1, (d.wait - 0.5) / 0.8) };
 }
 
 function shoot(dirX, dirY, power) {
@@ -414,6 +473,7 @@ function vsPar(score, par) {
 const cap = s => s[0].toUpperCase() + s.slice(1);
 
 function finishHole(pickedUp) {
+  if (game.demo) { demoReset(); return; }
   game.state = 'done';
   game.drag = null;
   game.kbAim = null;
@@ -475,14 +535,14 @@ function scorecardTable(scores) {
 }
 
 function showTitle() {
-  game.state = 'menu';
   game.paused = false;
   game.courseIndex = 0;
   game.holeIndex = 0;
   game.scores = [];
-  game.strokes = 0;
-  game.ball.x = hole().start[0];
-  game.ball.y = hole().start[1];
+  game.trans = null;
+  game.ace = null;
+  particles.length = 0;
+  demoReset();   // the course plays itself behind the menu
   clearToasts();
   document.body.classList.add('menu');
   setTheme(course().theme);
@@ -506,7 +566,7 @@ function showTitle() {
 }
 
 function showMenu() {
-  if (game.state === 'menu' || game.state === 'done') return;
+  if (game.demo || game.state === 'menu' || game.state === 'done') return;
   game.paused = true;
   game.drag = null;
   showOverlay(
@@ -534,7 +594,7 @@ function soundToggle() {
 }
 
 function canRestart() {
-  return !game.paused && (game.state === 'aim' || game.state === 'rolling');
+  return !game.paused && !game.demo && !game.trans && (game.state === 'aim' || game.state === 'rolling');
 }
 
 const $ = id => document.getElementById(id);
@@ -560,7 +620,7 @@ $('card').addEventListener('click', e => {
   ensureAudio();
   switch (el.dataset.action) {
     case 'course': startCourse(Number(el.dataset.index)); break;
-    case 'next': startHole(game.holeIndex + 1); break;
+    case 'next': startHole(game.holeIndex + 1, { transition: true }); break;
     case 'finish': finishCourse(); break;
     case 'replay': startCourse(game.courseIndex); break;
     case 'courses': showTitle(); break;
@@ -597,6 +657,7 @@ const toastQueue = [];
 let toastTimer = null;
 
 function toast(msg, ms = 1800, now = false) {
+  if (game.demo) return;
   if (now) clearToasts();
   toastQueue.push({ msg, ms });
   if (!toastTimer) nextToast();
@@ -645,7 +706,7 @@ function ensureAudio() {
 }
 
 function tone(freq, dur, type, vol, delay = 0) {
-  if (!audio || !save.sound) return;
+  if (!audio || !save.sound || game.demo) return;   // the title demo plays silently
   const t = audio.currentTime + delay;
   const osc = audio.createOscillator();
   const gain = audio.createGain();
@@ -685,7 +746,8 @@ const sfx = {
 
 const canvas = $('game');
 const ctx = canvas.getContext('2d');
-const view = { rotated: false, scale: 1, dpr: 1, signShown: false };
+const view = { rotated: false, scale: 1, dpr: 1, signShown: false, shift: null };
+const snap = document.createElement('canvas');   // the last hole, while it animates away
 
 function resize() {
   const wrap = $('wrap');
@@ -709,7 +771,7 @@ function resize() {
   view.rotated = tall > wide * 1.1;
   view.scale = Math.max(0.2, view.rotated ? tall : wide);
   view.dpr = window.devicePixelRatio || 1;
-  view.signShown = !view.rotated && !!(game.state !== 'menu' && hole().label);
+  view.signShown = !view.rotated && !!(!game.demo && hole().label);
 
   const cssW = (view.rotated ? H : W) * view.scale;
   const cssH = (view.rotated ? W : H) * view.scale;
@@ -724,10 +786,15 @@ function resize() {
   if (toastTimer) positionToast();
 }
 
-function worldTransform(c = ctx) {
+// view.shift is a screen-space move (device px) laid over the world: used to
+// carry a hole in during a transition and to zoom on a hole in one.
+function worldTransform(c = ctx, shifted = true) {
   const s = view.scale * view.dpr;
-  if (view.rotated) c.setTransform(0, -s, s, 0, 0, W * s);
-  else c.setTransform(s, 0, 0, s, 0, 0);
+  const sh = shifted && c === ctx ? view.shift : null;
+  c.setTransform(1, 0, 0, 1, 0, 0);
+  if (sh) c.setTransform(sh.s, 0, 0, sh.s, sh.x, sh.y);
+  if (view.rotated) c.transform(0, -s, s, 0, 0, W * s);
+  else c.transform(s, 0, 0, s, 0, 0);
 }
 
 function toWorld(clientX, clientY) {
@@ -773,7 +840,7 @@ const ownsPointer = e => game.drag && e.pointerId === game.drag.id;
 canvas.addEventListener('pointerdown', e => {
   ensureAudio();
   if (game.drag || !e.isPrimary || e.button > 0) return;
-  if (game.state !== 'aim' || game.paused) return;
+  if (game.state !== 'aim' || game.paused || game.demo || game.trans) return;
   try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* not fatal */ }
   game.kbAim = null;
   game.drag = { id: e.pointerId, scx: e.clientX, scy: e.clientY, cx: e.clientX, cy: e.clientY };
@@ -811,7 +878,7 @@ window.addEventListener('keydown', e => {
   }
   if ($('overlay').classList.contains('show')) return;   // let buttons have the keys
   if ((e.key === 'r' || e.key === 'R') && canRestart()) { startHole(game.holeIndex); return; }
-  if (!AIM_KEYS.includes(e.key) || game.state !== 'aim' || game.paused || game.drag) return;
+  if (!AIM_KEYS.includes(e.key) || game.state !== 'aim' || game.paused || game.drag || game.demo || game.trans) return;
   e.preventDefault();
   ensureAudio();
   const b = game.ball;
@@ -847,7 +914,10 @@ function viewState() {
     if (len > 0.5) aim = { ux: dx / len, uy: dy / len, power };
   } else if (game.kbAim && game.state === 'aim') {
     aim = { ux: Math.cos(game.kbAim.angle), uy: Math.sin(game.kbAim.angle), power: game.kbAim.power };
+  } else {
+    aim = demoAim();
   }
+  if (aim) Object.assign(aim, aimPath(aim.ux, aim.uy, aim.power));
   let r = Math.max(BALL_R, MIN_BALL_PX / view.scale);
   if (game.state === 'sinking') r *= 1 - 0.6 * game.timer;
   return {
@@ -865,6 +935,35 @@ function viewState() {
     aim,
     flagAlpha: Math.max(0, Math.min(1, (Math.hypot(b.x - cx, b.y - cy) - 40) / 60)),
   };
+}
+
+// The aim line follows the ball's first stretch of travel, so slopes bend it.
+// Walls stop it: it shows the start of the roll, not where the ball ends up.
+function aimPath(ux, uy, power) {
+  const h = hole(), b = game.ball;
+  const reach = 30 + power * 140;
+  const speed = Math.max(300, Math.pow(power, POWER_CURVE) * MAX_SPEED);
+  const segs = boundarySegments(h), R = BALL_R + WALL_HALF;
+  let x = b.x, y = b.y, vx = ux * speed, vy = uy * speed, dist = 0;
+  const path = [];
+  for (let i = 0; i < 300 && dist < reach; i++) {
+    const z = zoneAt(h, x, y);
+    if (z && z.type === 'slope') { vx += z.ax / 120; vy += z.ay / 120; }
+    const s = Math.hypot(vx, vy);
+    x += vx / 120; y += vy / 120; dist += s / 120;
+    if (segs.some(g => distToSegment(x, y, g) < R)) break;
+    if (dist > 14) path.push([x, y]);
+  }
+  if (path.length < 2) path.push([b.x + ux * 16, b.y + uy * 16], [b.x + ux * 22, b.y + uy * 22]);
+  const [x1, y1] = path[path.length - 2], [x2, y2] = path[path.length - 1];
+  const l = Math.hypot(x2 - x1, y2 - y1) || 1;
+  return { path, end: { x: x2, y: y2, ux: (x2 - x1) / l, uy: (y2 - y1) / l } };
+}
+
+function distToSegment(x, y, s) {
+  const ex = s.x2 - s.x1, ey = s.y2 - s.y1, l2 = ex * ex + ey * ey;
+  const t = l2 ? Math.max(0, Math.min(1, ((x - s.x1) * ex + (y - s.y1) * ey) / l2)) : 0;
+  return Math.hypot(x - (s.x1 + ex * t), y - (s.y1 + ey * t));
 }
 
 // Ghost copies behind a fast ball: positions from a few steps ago.
@@ -923,23 +1022,104 @@ function drawBubbles(v) {
   }
 }
 
+// Where the old hole goes and where the new one comes from, by progress p.
+// 'rise': the old island floats up and away as the next rises through the sky.
+// 'slide': the old mat slides off the desk to the left as the next slides in.
+function transitionShifts(tr) {
+  const Wd = canvas.width, Hd = canvas.height, e = eio(tr.p);
+  if (tr.kind === 'slide') {
+    return { old: { s: 1, x: -Wd * e, y: 0, a: 1 }, now: { s: 1, x: Wd * (1 - e), y: 0 } };
+  }
+  const so = 1 - 0.4 * e, sn = 0.86 + 0.14 * e;
+  return {
+    old: { s: so, x: (Wd - Wd * so) / 2, y: (Hd - Hd * so) / 2 - Hd * 0.45 * e, a: 1 - e },
+    now: { s: sn, x: (Wd - Wd * sn) / 2, y: (Hd - Hd * sn) / 2 + Hd * 0.75 * (1 - e) },
+  };
+}
+
+const eio = x => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+
+// A hole in one: zoom gently on the cup while the banner pops.
+function aceShift() {
+  if (!game.ace || game.state === 'done') return null;
+  const k = eio(Math.min(1, (game.t - game.ace.t) / 0.6)) * 0.14;
+  const p = toScreen(hole().cup[0], hole().cup[1]);
+  const cx = p.x * view.dpr, cy = p.y * view.dpr, s = 1 + k;
+  return { s, x: cx - cx * s, y: cy - cy * s };
+}
+
+// "Hole in one!" in the course's own style, upright on screen.
+function drawAceBanner() {
+  const age = game.t - game.ace.t - 0.15;
+  if (age <= 0) return;
+  const pop = Math.min(1, age / 0.35);
+  const s = pop < 1 ? 1 + 0.7 * Math.sin(pop * Math.PI) * (1 - pop) + (pop - 1) * 0.3 * (1 - pop) : 1;
+  const Wc = canvas.width / view.dpr, Hc = canvas.height / view.dpr;
+  const size = Math.max(28, Math.min(64, Wc * 0.08));
+  ctx.save();
+  ctx.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+  ctx.translate(Wc / 2, Hc * 0.24);
+  ctx.scale(s * pop, s * pop);
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  if (theme().banner === 'stamp') {
+    ctx.rotate(-0.12);
+    ctx.font = `900 ${size}px "Courier New", ui-monospace, monospace`;
+    const w = ctx.measureText('HOLE IN ONE!').width + size;
+    ctx.strokeStyle = ctx.fillStyle = 'rgba(200, 30, 40, 0.9)';
+    ctx.lineWidth = size * 0.1;
+    ctx.strokeRect(-w / 2, -size * 0.8, w, size * 1.6);
+    ctx.lineWidth = size * 0.035;
+    ctx.strokeRect(-w / 2 + size * 0.16, -size * 0.64, w - size * 0.32, size * 1.28);
+    ctx.fillText('HOLE IN ONE!', 0, size * 0.04);
+  } else {
+    ctx.font = `700 ${size}px "Fredoka", system-ui, sans-serif`;
+    const w = ctx.measureText('Hole in one!').width + size * 1.4, hh = size * 1.4;
+    ctx.fillStyle = '#a8322e';
+    for (const sg of [-1, 1]) {
+      ctx.beginPath();
+      ctx.moveTo(sg * w * 0.42, -hh * 0.3); ctx.lineTo(sg * (w / 2 + size * 0.6), -hh * 0.3);
+      ctx.lineTo(sg * (w / 2 + size * 0.35), hh * 0.15); ctx.lineTo(sg * (w / 2 + size * 0.6), hh * 0.6);
+      ctx.lineTo(sg * w * 0.42, hh * 0.6); ctx.closePath(); ctx.fill();
+    }
+    ctx.fillStyle = '#c8322d';
+    ctx.beginPath(); ctx.roundRect(-w / 2, -hh / 2, w, hh, 8); ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('Hole in one!', 0, size * 0.06);
+  }
+  ctx.restore();
+}
+
 function render() {
   const v = viewState();
   const t = theme();
-  if (t.background) {
-    // The static layer has see-through sky, so clear and let the CSS gradient show.
+  const tr = game.trans;
+  const sh = tr ? transitionShifts(tr) : null;
+  if (t.background || tr) {
+    // See-through sky (or a transition): clear and let the CSS background show.
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
   }
-  worldTransform();
+  worldTransform(ctx, false);
   if (t.drawBackdrop) t.drawBackdrop(ctx, v);
+  if (sh) {
+    ctx.save();
+    ctx.setTransform(sh.old.s, 0, 0, sh.old.s, sh.old.x, sh.old.y);
+    ctx.globalAlpha = sh.old.a;
+    ctx.drawImage(snap, 0, 0);
+    ctx.restore();
+  }
+  view.shift = sh ? sh.now : aceShift();
   const img = staticLayer(v);
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  const vs = view.shift;
+  ctx.setTransform(vs ? vs.s : 1, 0, 0, vs ? vs.s : 1, vs ? vs.x : 0, vs ? vs.y : 0);
   ctx.drawImage(img, 0, 0);
   worldTransform();
   t.drawDynamic(ctx, v);
   drawParticles();
+  view.shift = null;
   drawBubbles(v);
+  if (game.ace) drawAceBanner();
 
   const { aim, ball: b } = v;
   if (aim) {
@@ -986,8 +1166,8 @@ function frame(now) {
     step(STEP);
     acc -= STEP;
   }
-  if (game.state === 'menu') game.t += dt;   // keep the title backdrop alive
   updateParticles(dt);
+  if (game.trans && (game.trans.p += dt / TRANSITION) >= 1) game.trans = null;
   // While paused behind a menu nothing moves, so draw one frame and idle.
   if (game.paused && !particles.length) {
     if (!pausedFrameDrawn) { render(); pausedFrameDrawn = true; }
@@ -1002,4 +1182,4 @@ showTitle();
 requestAnimationFrame(frame);
 
 // Handy for debugging from the console and for automated tests.
-window.miniGolf = { game, COURSES, shoot, step, render, updateParticles, startCourse, startHole, save, view, toWorld };
+window.miniGolf = { game, COURSES, shoot, step, render, updateParticles, aimPath, startCourse, startHole, save, view, toWorld };

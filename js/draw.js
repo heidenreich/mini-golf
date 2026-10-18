@@ -90,6 +90,11 @@ function outwardEdges(shape) {
   });
 }
 
+function tracePath(ctx, pts) {
+  ctx.beginPath();
+  pts.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+}
+
 // Ball helpers shared by the themes: a fading trail on fast shots, and the
 // squash on impact (flattened along the hit normal, volume roughly kept).
 function drawBallTrail(ctx, ball, color) {

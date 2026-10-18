@@ -85,6 +85,67 @@
     ctx.restore();
   }
 
+  // Odds and ends lying about the desk
+  function coin(ctx, x, y) {
+    dropShadow(ctx, true, 'rgba(40, 20, 5, 0.35)', 3, 2, 2);
+    ctx.fillStyle = '#c9a24a';
+    circle(ctx, x, y, 13); ctx.fill();
+    dropShadow(ctx, false);
+    ctx.strokeStyle = '#9c7a2c';
+    ctx.lineWidth = 1.5;
+    circle(ctx, x, y, 10); ctx.stroke();
+    ctx.fillStyle = 'rgba(255, 245, 200, 0.45)';
+    ctx.beginPath(); ctx.ellipse(x - 4, y - 5, 4, 2, -0.6, 0, Math.PI * 2); ctx.fill();
+  }
+
+  function pushpin(ctx, x, y, color) {
+    dropShadow(ctx, true, 'rgba(40, 20, 5, 0.4)', 3, 4, 5);
+    ctx.fillStyle = color;
+    circle(ctx, x, y, 8); ctx.fill();
+    dropShadow(ctx, false);
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+    circle(ctx, x - 2.5, y - 2.5, 2.5); ctx.fill();
+  }
+
+  function rubberBand(ctx, x, y, rot) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    ctx.strokeStyle = '#c8a25e';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.ellipse(0, 0, 24, 10, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.restore();
+  }
+
+  function penCap(ctx, x, y, rot) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    dropShadow(ctx, true, 'rgba(40, 20, 5, 0.35)', 3, 2, 3);
+    ctx.fillStyle = '#2b59c3';
+    ctx.beginPath(); ctx.roundRect(-14, -5, 28, 10, [5, 2, 2, 5]); ctx.fill();
+    dropShadow(ctx, false);
+    ctx.fillStyle = '#1b3f95';
+    ctx.fillRect(-4, -8, 16, 3);
+    ctx.restore();
+  }
+
+  function doodle(ctx, x, y, rot) {
+    ctx.save();
+    ctx.translate(x, y);
+    ctx.rotate(rot);
+    dropShadow(ctx, true);
+    ctx.fillStyle = '#bae6fd';
+    ctx.fillRect(-28, -28, 56, 56);
+    dropShadow(ctx, false);
+    ctx.strokeStyle = '#2b59c3';
+    ctx.lineWidth = 1.6;
+    ctx.beginPath(); ctx.arc(-6, 0, 9, 0, Math.PI * 2); ctx.stroke();       // a smiley
+    ctx.beginPath(); ctx.arc(-6, 1, 5, 0.2, Math.PI - 0.2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(8, -12); ctx.lineTo(8, 14); ctx.moveTo(8, -12); ctx.lineTo(20, -8); ctx.lineTo(8, -4); ctx.stroke();   // a little flag
+    ctx.restore();
+  }
+
   function stickyNote(ctx, x, y, hole, index) {
     ctx.save();
     ctx.translate(x, y);
@@ -154,8 +215,19 @@
       }
       ctx.restore();
     } else if (z.type === 'water') {
-      // Ink blot
-      if (pass !== 'static') return;
+      // Ink blot: a slow sheen slides across the wet surface
+      if (pass !== 'static') {
+        ctx.save();
+        blob(ctx, cx, cy, z.w / 2, z.h / 2, z.y * 0.017, 0.07);
+        ctx.clip();
+        const u = (t * 0.12) % 1.6 - 0.3;
+        ctx.fillStyle = 'rgba(170, 190, 255, 0.16)';
+        ctx.beginPath();
+        ctx.ellipse(z.x + u * z.w, cy - z.h * 0.1, z.w * 0.16, z.h * 0.5, 0.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+        return;
+      }
       blob(ctx, cx, cy, z.w / 2, z.h / 2, z.y * 0.017, 0.07);
       ctx.fillStyle = '#16205a';
       ctx.fill();
@@ -246,8 +318,16 @@
     ctx.strokeStyle = 'rgba(90, 45, 15, 0.35)';
     ctx.lineWidth = 6;
     ctx.beginPath(); ctx.arc(60 + rand(seed) * 780, 40 + rand(seed + 1) * 520, 40, 0.3, Math.PI * 1.75); ctx.stroke();
-    for (let i = 0; i < 4; i++) {
-      paperclip(ctx, 30 + rand(seed + i * 3) * 840, 25 + rand(seed + i * 3 + 1) * 550, rand(seed + i) * 3);
+    const pins = ['#e23b3b', '#2b59c3', '#f6c343', '#3aa35a'];
+    for (let i = 0; i < 7; i++) {
+      const x = 30 + rand(seed + i * 3) * 840, y = 25 + rand(seed + i * 3 + 1) * 550, r = rand(seed + i) * 3;
+      const kind = Math.floor(rand(seed + i * 5 + 2) * 6);
+      if (kind === 0 || kind === 1) paperclip(ctx, x, y, r);
+      else if (kind === 2) coin(ctx, x, y);
+      else if (kind === 3) pushpin(ctx, x, y, pins[i % 4]);
+      else if (kind === 4) rubberBand(ctx, x, y, r);
+      else if (i % 2) penCap(ctx, x, y, r);
+      else doodle(ctx, x, y, r * 0.1 - 0.15);
     }
 
     // Cutting mat fairway
@@ -434,18 +514,14 @@
 
     // Aim: a sketchy pencil arrow
     if (v.aim) {
-      const { ux, uy, power } = v.aim;
-      const reach = 30 + power * 140;
+      const { x: tx, y: ty, ux, uy } = v.aim.end;
       ctx.strokeStyle = '#1f1f1f';
       ctx.lineWidth = 2.2;
       ctx.lineCap = 'round';
       ctx.setLineDash([9, 6]);
-      ctx.beginPath();
-      ctx.moveTo(b.x + ux * 14, b.y + uy * 14);
-      ctx.lineTo(b.x + ux * reach, b.y + uy * reach);
+      tracePath(ctx, v.aim.path);
       ctx.stroke();
       ctx.setLineDash([]);
-      const tx = b.x + ux * reach, ty = b.y + uy * reach;
       ctx.beginPath();
       ctx.moveTo(tx - ux * 12 - uy * 8, ty - uy * 12 + ux * 8);
       ctx.lineTo(tx + ux * 2, ty + uy * 2);
@@ -455,6 +531,8 @@
   }
 
   THEMES.desk = {
+    transition: 'slide',
+    banner: 'stamp',
     drawStatic,
     drawDynamic,
     confetti: ['#fde68a', '#fbcfe8', '#bae6fd', '#ffffff', '#e23b3b'],
